@@ -1,15 +1,13 @@
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
-
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
-from pydantic import BaseModel
+from pydantic import BaseModel , EmailStr
+from database.db import get_db_connection , user_exists , create_user
 
-# to get a string like this run:
-# openssl rand -hex 32
 SECRET_KEY = "43afd4e465e4675b0681922cec004ad6cd7c3be93a4a4d3fc8271da4cc554389"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
@@ -45,10 +43,14 @@ class User(BaseModel):
 class UserInDB(User):
     hashed_password: str
 
+class SignUpRequest(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+
 
 password_hash = PasswordHash.recommended()
 
-DUMMY_HASH = password_hash.hash("dummypassword")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -72,7 +74,6 @@ def get_user(db, username: str):
 def authenticate_user(fake_db, username: str, password: str):
     user = get_user(fake_db, username)
     if not user:
-        verify_password(password, DUMMY_HASH)
         return False
     if not verify_password(password, user.hashed_password):
         return False
@@ -119,9 +120,7 @@ async def get_current_active_user(
 
 
 @app.post("/token")
-async def login_for_access_token(
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-) -> Token:
+async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()],) -> Token:
     user = authenticate_user(fake_users_db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -137,26 +136,23 @@ async def login_for_access_token(
 
 
 @app.get("/users/me/")
-async def read_users_me(
-    current_user: Annotated[User, Depends(get_current_active_user)],
-) -> User:
+async def read_users_me(current_user: Annotated[User, Depends(get_current_active_user)],) -> User:
     return current_user
 
 
-@app.get("/users/me/items/")
-async def read_own_items(
-    current_user: Annotated[User, Depends(get_current_active_user)],
-):
-    return [{"item_id": "Foo", "owner": current_user.username}]
+@app.post("/sign-up")
+async def sign_up(payload: SignUpRequest):
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        if user_exists(cur, payload.email):
+            raise HTTPException(status_code=400, detail="User already exists")
 
-@app.get("/")
-def read_root():
-    return {"Hello": "World"}
+        hashed = get_password_hash(payload.password)
+        create_user(cur, payload.username, payload.email, hashed)
+        conn.commit()
+        return {"message": "user created successfully"}
+    finally:
+        conn.close()
 
-@app.get("/items/")
-async def read_items(token: Annotated[str, Depends(oauth2_scheme)]):
-    return {"token": token}
 
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: str | None = None):
-    return {"item_id": item_id, "q": q}

@@ -1,38 +1,31 @@
-#!/usr/bin/python
+# db.py
 import psycopg2
-from config import config
+from .config import config
+from psycopg2.extras import RealDictCursor
 
-def connect():
-    """ Connect to the PostgreSQL database server """
-    conn = None
+def get_db_connection():
+    """Connect to the PostgreSQL database server and return the connection."""
     try:
-        # read connection parameters
         params = config()
-
-        # connect to the PostgreSQL server
-        print('Connecting to the PostgreSQL database...')
         conn = psycopg2.connect(**params)
-        
-        # create a cursor
-        cur = conn.cursor()
-        
-    # execute a statement
-        print('PostgreSQL database version:')
-        cur.execute('SELECT version()')
-
-        # display the PostgreSQL database server version
-        db_version = cur.fetchone()
-        print(db_version)
-       
-    # close the communication with the PostgreSQL
-        cur.close()
+        return conn.cursor(cursor_factory=RealDictCursor)
     except (Exception, psycopg2.DatabaseError) as error:
         print(error)
-    finally:
-        if conn is not None:
-            conn.close()
-            print('Database connection closed.')
+
+def user_exists(cur, email) -> bool:
+    cur.execute("SELECT 1 FROM users WHERE email = %s", (email,))
+    return cur.fetchone() is not None
+
+def create_user(cur, name, email, password_hash) -> str:
+    cur.execute(
+        "INSERT INTO users (name, email, password_hash) VALUES (%s, %s, %s)",
+        (name, email, password_hash),
+    )
+    return "user created successfully"
 
 
-if __name__ == '__main__':
-    connect()
+def get_user_by_email(cur,email):
+    cur.execute("SELECT id, name, email, password_hash FROM users WHERE email = %s", (email,))
+    return cur.fetchone()
+    
+
