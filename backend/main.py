@@ -48,6 +48,7 @@ async def login_for_access_token(request: Request,form_data: Annotated[OAuth2Pas
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         user_db = get_user_by_email(cur,form_data.username)
+        
     except Exception:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
     finally:
@@ -56,6 +57,12 @@ async def login_for_access_token(request: Request,form_data: Annotated[OAuth2Pas
         if conn:
             conn.close()
 
+    if user_db is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     user = authenticate_user(user_db, form_data.password)
     if not user:
         raise HTTPException(
@@ -73,6 +80,10 @@ async def login_for_access_token(request: Request,form_data: Annotated[OAuth2Pas
 @app.post("/sign-up")
 @limiter.limit("5/minute")
 async def sign_up(request: Request,payload: SignUpRequest):
+    if len(payload.email) == 0 or payload.email == None:
+        raise
+    if len(payload.password) == 0 or len(payload.password) <= 5 or payload.password == None:
+        raise
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:

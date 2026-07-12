@@ -32,6 +32,7 @@ def get_password_hash(password):
     return password_hash.hash(password)
 
 def authenticate_user(user_db, password: str):
+    print(user_db)
     if not verify_password(password, user_db['hashed_password']):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
