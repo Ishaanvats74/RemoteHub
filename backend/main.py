@@ -1,9 +1,10 @@
-from auth.auth import get_current_active_user, authenticate_user, create_access_token, get_password_hash
-from database.db import get_db_connection, user_exists, create_user, get_user_by_email
+from database.db import get_db_connection, user_exists, create_user, get_user_by_email, revoke_refresh_token, insert_refresh_token
+from auth.auth import get_current_active_user, authenticate_user, create_access_token,create_refresh_token, get_password_hash
 from fastapi import Depends, FastAPI, HTTPException, status
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi.errors import RateLimitExceeded
+from jwt.exceptions import InvalidTokenError
 from slowapi.util import get_remote_address
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, EmailStr
@@ -12,12 +13,24 @@ from dotenv import load_dotenv
 from typing import Annotated
 from fastapi import Request
 import psycopg2
+import jwt
 import os
 load_dotenv()
 
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES'),30)
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv('REFRESH_TOKEN_EXPIRE_DAYS'),15)
+SECRET_KEY = os.getenv('SECRET_KEY')
+ALGORITHM = os.getenv('ALGORITHM')
 
-class Token(BaseModel):
+class TokenPair(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+class AccessToken(BaseModel):
     access_token: str
     token_type: str
 
@@ -35,15 +48,18 @@ app = FastAPI()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+@app.get("/healt")
+def health():
+    return {"status": "ok"}
+
 @app.get("/users/me/")
 @limiter.limit("5/minute")
 async def read_users_me(request: Request,current_user: Annotated[User, Depends(get_current_active_user)],) -> User:
     return current_user
 
-
 @app.post("/token")
 @limiter.limit("5/minute")
-async def login_for_access_token(request: Request,form_data: Annotated[OAuth2PasswordRequestForm, Depends()],) -> Token:
+async def login_for_access_token(request: Request,form_data: Annotated[OAuth2PasswordRequestForm, Depends()],) ->TokenPair :
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
@@ -72,10 +88,26 @@ async def login_for_access_token(request: Request,form_data: Annotated[OAuth2Pas
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user['email']}, expires_delta=access_token_expires
+        data={"sub": user['email'],"type":"access"}, expires_delta=access_token_expires
     )
-    return Token(access_token=access_token, token_type="bearer")
+    refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_token = create_refresh_token(
+        data={"sub": user['email'],"type":"refresh"}, expires_delta=refresh_token_expires
+    )
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
 
+    insert_refresh_token(cur,user_db['id'],refresh_token['expire'],refresh_token['encoded_jwt'])
+
+    if cur:
+            cur.close()
+    if conn:
+        conn.close()
+    return TokenPair(
+    access_token=access_token['encoded_jwt'],
+    refresh_token=refresh_token['encoded_jwt'],
+    token_type="bearer",
+)
 
 @app.post("/sign-up")
 @limiter.limit("5/minute")
@@ -106,3 +138,46 @@ async def sign_up(request: Request,payload: SignUpRequest):
         if conn:
             conn.close()
 
+@app.post('/refresh')
+@limiter.limit("10/minute")
+async def refresh(request: Request, payload: RefreshRequest) -> AccessToken:
+    try:
+        decoded = jwt.decode(payload.refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        print(decoded)
+    except InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+    if decoded.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+
+    email = decoded.get("sub")
+    if email is None:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    new_access_token = create_access_token(
+        data={"sub": email, "type": "access"},
+        expires_delta=access_token_expires,
+    )
+    return AccessToken(access_token=new_access_token['encoded_jwt'], token_type="bearer")
+
+@app.post('/logout')
+@limiter.limit("10/minute")
+async def refresh(request: Request, payload: RefreshRequest) :
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        revoke_refresh_token(cur,payload.refresh_token)
+        return {"message": "Logged out successfully"}
+    except HTTPException:
+        raise 
+
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+        raise HTTPException(status_code=500, detail=error)
+    
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()

@@ -1,6 +1,7 @@
 # db.py
 import psycopg2
 from .config import config
+import hashlib
 
 
 def get_db_connection():
@@ -29,4 +30,18 @@ def get_user_by_email(cur,email):
     cur.execute("SELECT id, username, email, hashed_password FROM users WHERE email = %s", (email,))
     return cur.fetchone()
     
+def revoke_refresh_token(cur,refresh_token):
+    sha256 = hashlib.sha256()
+    sha256.update(refresh_token.encode())
+    string_hash = sha256.hexdigest()
+    cur.execute("update refresh_tokens set revoked=true where token_hash=%s",(string_hash,))
+    
+
+def insert_refresh_token(cur,user_id,expire,refresh_token):
+    print(refresh_token)
+    sha256 = hashlib.sha256()
+    sha256.update(refresh_token.encode())
+    string_hash = sha256.hexdigest()
+    cur.execute("insert into refresh_tokens (user_id,token_hash,revoked,expires_at) values (%s,%s,%s,%s)",(user_id,string_hash,False,expire))
+    return {"message": "inserted token successfully"}
 
