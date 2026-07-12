@@ -1,158 +1,97 @@
-from datetime import datetime, timedelta, timezone
-from typing import Annotated
-import jwt
+from auth.auth import get_current_active_user, authenticate_user, create_access_token, get_password_hash
+from database.db import get_db_connection, user_exists, create_user, get_user_by_email
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from jwt.exceptions import InvalidTokenError
-from pwdlib import PasswordHash
-from pydantic import BaseModel , EmailStr
-from database.db import get_db_connection , user_exists , create_user
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from fastapi.security import OAuth2PasswordRequestForm
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, EmailStr
+from datetime import timedelta
+from dotenv import load_dotenv
+from typing import Annotated
+from fastapi import Request
+import psycopg2
+import os
+load_dotenv()
 
-SECRET_KEY = "43afd4e465e4675b0681922cec004ad6cd7c3be93a4a4d3fc8271da4cc554389"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-
-fake_users_db = {
-    "johndoe": {
-        "username": "johndoe",
-        "full_name": "John Doe",
-        "email": "johndoe@example.com",
-        "hashed_password": "$argon2id$v=19$m=65536,t=3,p=4$wagCPXjifgvUFBzq4hqe3w$CYaIb8sB+wtD+Vu/P4uod1+Qof8h+1g7bbDlBID48Rc",
-        "disabled": False,
-    }
-}
-
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES'),30)
 
 class Token(BaseModel):
     access_token: str
     token_type: str
 
-
-class TokenData(BaseModel):
-    username: str | None = None
-
-
 class User(BaseModel):
-    username: str
-    email: str | None = None
-    full_name: str | None = None
-    disabled: bool | None = None
-
-
-class UserInDB(User):
-    hashed_password: str
+    email: str 
+    username: str | None = None
 
 class SignUpRequest(BaseModel):
     username: str
     email: EmailStr
     password: str
 
-
-password_hash = PasswordHash.recommended()
-
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-
-def verify_password(plain_password, hashed_password):
-    return password_hash.verify(plain_password, hashed_password)
-
-
-def get_password_hash(password):
-    return password_hash.hash(password)
-
-
-def get_user(db, username: str):
-    if username in db:
-        user_dict = db[username]
-        return UserInDB(**user_dict)
-
-
-def authenticate_user(fake_db, username: str, password: str):
-    user = get_user(fake_db, username)
-    if not user:
-        return False
-    if not verify_password(password, user.hashed_password):
-        return False
-    return user
-
-
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except InvalidTokenError:
-        raise credentials_exception
-    user = get_user(fake_users_db, username=token_data.username)
-    if user is None:
-        raise credentials_exception
-    return user
-
-
-async def get_current_active_user(
-    current_user: Annotated[User, Depends(get_current_user)],
-):
-    if current_user.disabled:
-        raise HTTPException(status_code=400, detail="Inactive user")
+@app.get("/users/me/")
+@limiter.limit("5/minute")
+async def read_users_me(request: Request,current_user: Annotated[User, Depends(get_current_active_user)],) -> User:
     return current_user
 
 
 @app.post("/token")
-async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()],) -> Token:
-    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+@limiter.limit("5/minute")
+async def login_for_access_token(request: Request,form_data: Annotated[OAuth2PasswordRequestForm, Depends()],) -> Token:
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        user_db = get_user_by_email(cur,form_data.username)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+    user = authenticate_user(user_db, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": user['email']}, expires_delta=access_token_expires
     )
     return Token(access_token=access_token, token_type="bearer")
 
 
-@app.get("/users/me/")
-async def read_users_me(current_user: Annotated[User, Depends(get_current_active_user)],) -> User:
-    return current_user
-
-
 @app.post("/sign-up")
-async def sign_up(payload: SignUpRequest):
+@limiter.limit("5/minute")
+async def sign_up(request: Request,payload: SignUpRequest):
     conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur = conn.cursor()
         if user_exists(cur, payload.email):
             raise HTTPException(status_code=400, detail="User already exists")
-
         hashed = get_password_hash(payload.password)
         create_user(cur, payload.username, payload.email, hashed)
-        conn.commit()
         return {"message": "user created successfully"}
-    finally:
-        conn.close()
+    
+    except HTTPException:
+        raise 
 
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+        raise HTTPException(status_code=500, detail=error)
+    
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
