@@ -32,7 +32,6 @@ def get_password_hash(password):
     return password_hash.hash(password)
 
 def authenticate_user(user_db, password: str):
-    print(user_db)
     if not verify_password(password, user_db['hashed_password']):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -73,6 +72,8 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "access":
+            raise credentials_exception
         username = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -95,6 +96,7 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
 
     if user is None:
         raise credentials_exception
+    
     return user
 
 
