@@ -1,0 +1,10 @@
+fastapi[standard]
+pyjwt
+pwdlib[argon2]
+psycopg2-binary
+slowapi
+requests      
+websockets    
+psutil             
+asyncio       
+numpy
