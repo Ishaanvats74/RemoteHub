@@ -3,7 +3,13 @@ import os
 from datetime import datetime, timedelta, timezone
 from pwdlib import PasswordHash
 from dotenv import load_dotenv
+from database.utils import hash_token
+from database.connection import get_db_connection
+from database.devices import check_device
+from fastapi import  HTTPException, status
+from psycopg2.extras import RealDictCursor
 load_dotenv()
+
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 ALGORITHM = os.getenv('ALGORITHM')
@@ -38,3 +44,23 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return {"encoded_jwt": encoded_jwt, "expire": expire}
+
+
+def authenticate_device(token):
+    token_hash = hash_token(token)
+    
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        user = check_device(cur,token_hash)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
+    finally:
+        cur.close()
+        conn.close()
+    print(user)
+    if not user:
+        return
+    return user
+
+    

@@ -17,10 +17,20 @@ def create_device_token(cur, device_id):
         "exp": expire,
     }
     raw_token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-
+    
     token_hash = hash_token(raw_token)
     cur.execute(
         "UPDATE devices SET token_hash = %s, token_expires_at = %s WHERE id = %s",
         (token_hash, expire, device_id)
     )
     return raw_token
+
+
+def check_device(cur, token_hash):
+    cur.execute("select * from devices where token_hash=%s",(token_hash,))
+    result = cur.fetchone()
+    print(result)
+    if not result:
+        return False
+    return True
+        

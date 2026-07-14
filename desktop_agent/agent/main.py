@@ -1,16 +1,18 @@
-import socket
-import platform
-import requests
-
-code = input("Enter pairing code: ").strip()
-
-payload = {
-    "code": code,
-    "hostname": socket.gethostname(),
-    "os": platform.system(),
-    "platform": platform.platform(),
-}
-
-result = requests.post('http://127.0.0.1:8000/devices/pair', json=payload)
-print(result.status_code)
-print(result.json())
+import websockets
+import asyncio
+ 
+# The main function that will handle connection and communication
+# with the server
+async def ws_client():
+    print("WebSocket: Client Connected.")
+    url = "ws://127.0.0.1:8000/ws/device"
+    # Connect to the server
+    async with websockets.connect(url) as ws:
+        
+        # Stay alive forever, listen to incoming msgs
+        while True:
+            msg = await ws.recv()
+            print(msg)
+ 
+# Start the connection
+asyncio.run(ws_client())
