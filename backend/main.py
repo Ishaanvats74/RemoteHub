@@ -1,4 +1,4 @@
-from database.db import get_db_connection, user_exists, create_user, get_user_by_email, revoke_refresh_token, insert_refresh_token, check_if_refresh_token_revked, revoke_all_other_refresh_token
+from database.db import get_db_connection, user_exists, create_user, get_user_by_email, revoke_refresh_token, insert_refresh_token, check_if_refresh_token_revked, revoke_all_other_refresh_token, insert_code, pair_device
 from auth.auth import get_current_active_user, authenticate_user, create_access_token,create_refresh_token, get_password_hash
 from fastapi import Depends, FastAPI, HTTPException, status
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -8,17 +8,19 @@ from jwt.exceptions import InvalidTokenError
 from slowapi.util import get_remote_address
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, EmailStr
-from datetime import timedelta
 from dotenv import load_dotenv
 from typing import Annotated
 from fastapi import Request
+import numpy as np
 import psycopg2
+from datetime import datetime, timedelta, timezone 
 import jwt
 import os
 load_dotenv()
 
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRE_MINUTES'),30)
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv('REFRESH_TOKEN_EXPIRE_DAYS'),15)
+PAIRING_CODE_EXPIRE_MINUTES = int(os.getenv('PAIRING_CODE_EXPIRE_MINUTES'),10)
 SECRET_KEY = os.getenv('SECRET_KEY')
 ALGORITHM = os.getenv('ALGORITHM')
 
@@ -43,6 +45,12 @@ class SignUpRequest(BaseModel):
     email: EmailStr
     password: str
 
+class DevicePairRequest(BaseModel):
+    code: str
+    hostname: str | None = None
+    os: str | None = None
+    platform: str | None = None
+
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
 app.state.limiter = limiter
@@ -53,12 +61,12 @@ def health():
     return {"status": "ok"}
 
 @app.get("/users/me/")
-@limiter.limit("5/minute")
+@limiter.limit("10/minute")
 async def read_users_me(request: Request,current_user: Annotated[User, Depends(get_current_active_user)],) -> User:
     return current_user
 
-@app.post("/auth/login")
-@limiter.limit("5/minute")
+@app.post("/token")
+@limiter.limit("10/minute")
 async def login_for_access_token(request: Request,form_data: Annotated[OAuth2PasswordRequestForm, Depends()],) -> TokenPair:
 
     conn = get_db_connection()
@@ -108,7 +116,7 @@ async def login_for_access_token(request: Request,form_data: Annotated[OAuth2Pas
     return TokenPair(access_token=access_token['encoded_jwt'],refresh_token=refresh_token['encoded_jwt'],token_type="bearer",)
 
 @app.post("/auth/register")
-@limiter.limit("5/minute")
+@limiter.limit("2/minute")
 async def sign_up(request: Request,payload: SignUpRequest):
 
     if len(payload.email) == 0 or payload.email == None:
@@ -199,6 +207,52 @@ async def refresh(request: Request, payload: RefreshRequest):
     except (Exception, psycopg2.DatabaseError) as error:
         raise HTTPException(status_code=500, detail=error)
     
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+
+
+@app.get('/devices/pairing_code')
+@limiter.limit("2/minute")
+async def pairing_code(request: Request,current_user: Annotated[User, Depends(get_current_active_user)]):
+    code = ''.join(map(str,np.random.randint(0,9,3))) + ''.join(map(str,np.random.randint(0,9,3)))                                                                                        
+    refresh_token_expires = datetime.now(timezone.utc) + timedelta(minutes=PAIRING_CODE_EXPIRE_MINUTES)
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+
+    try:
+        insert_code(cur,current_user['id'],code,refresh_token_expires)
+        return code
+    
+    except HTTPException:
+        raise 
+
+    except (Exception, psycopg2.DatabaseError) as error:
+        raise HTTPException(status_code=500, detail=error)
+    
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+    
+
+@app.post('/devices/pair')
+@limiter.limit("2/minute")
+async def pair(request: Request, payload: DevicePairRequest):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        device = pair_device(cur, payload.code, payload.hostname, payload.os, payload.platform)
+        return {"message": "pairing completed", "device_id": device["id"], "device_uuid": device["device_uuid"]}
+    except HTTPException:
+        raise
+    except (Exception, psycopg2.DatabaseError) as error:
+        raise HTTPException(status_code=500, detail=str(error))
     finally:
         if cur:
             cur.close()
