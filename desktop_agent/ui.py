@@ -12,12 +12,16 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt
+import requests
+from agent.main import ws_client
+import asyncio
+from qasync import QEventLoop, asyncSlot
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-
+        self.ws_task = None
         self.setWindowTitle("RemoteHub Agent")
         self.setFixedSize(420, 260)
 
@@ -152,7 +156,8 @@ class MainWindow(QMainWindow):
     def show_error(self, message):
         QMessageBox.warning(self, "Validation Error", message)
 
-    def pair_device(self):
+    @asyncSlot()
+    async def pair_device(self):
         code = self.code_input.text().strip()
 
         if not code:
@@ -168,19 +173,44 @@ class MainWindow(QMainWindow):
         print(f"Pairing Code: {code}")
 
         # TODO: Call backend API here
-
+        data = {
+            "code":code,
+            "hostname":'Ishaan',
+            'os':"Linux",
+            'platform':"Ubuntu"
+        }
+        response = await asyncio.to_thread(requests.post,"http://127.0.0.1:8000/devices/pair",json=data,)
+        print(response.json())
+        result = response.json()
         self.stack.setCurrentIndex(1)
         self.connect_btn.setEnabled(True)
+        if self.ws_task is None:
+            self.ws_task = asyncio.create_task(ws_client(result['device_token']))
 
-    def disconnect(self):
-        self.code_input.clear()
-        self.code_input.setFocus()
+    @asyncSlot()
+    async def disconnect(self):
+        if self.ws_task:
+            self.ws_task.cancel()
+
+            try:
+                await self.ws_task
+            except asyncio.CancelledError:
+                pass
+
+            self.ws_task = None
+
         self.stack.setCurrentIndex(0)
 
 
-app = QApplication([])
+
+
+app = QApplication()
+
+loop = QEventLoop(app)
+asyncio.set_event_loop(loop)
 
 window = MainWindow()
 window.show()
 
-app.exec()
+with loop:
+    loop.run_forever()

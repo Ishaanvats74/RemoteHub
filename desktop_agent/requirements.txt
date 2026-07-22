@@ -4,3 +4,4 @@ psutil
 asyncio       
 numpy
 pyside6
+qasync

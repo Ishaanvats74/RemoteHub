@@ -96,18 +96,26 @@ def get_live_stats():
     }
 # The main function that will handle connection and communication
 # with the server
-async def ws_client():
-    print("WebSocket: Client Connected.")
-    url = "ws://127.0.0.1:8000/ws/device"
-    # Connect to the server
-    async with websockets.connect(url) as ws:
-        
-        # Stay alive forever, listen to incoming msgs
+URL = "ws://127.0.0.1:8000/ws/device"
+
+async def ws_client(token):
+    async with websockets.connect(URL) as ws:
+
+        await ws.send(json.dumps({
+            "type": "auth",
+            "token": token
+        }))
+
         while True:
-            usage = get_live_stats()
-            print(usage)
-            await ws.send(json.dumps(usage))
+            usage = await asyncio.to_thread(get_live_stats)
+
+            await ws.send(json.dumps({
+                "type": "stats",
+                "data": usage
+            }))
+
+            await asyncio.sleep(1)
 
  
-# Start the connection
-asyncio.run(ws_client())
+# # Start the connection
+# asyncio.run(ws_client())
