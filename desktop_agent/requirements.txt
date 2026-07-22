@@ -3,3 +3,4 @@ websockets
 psutil              
 asyncio       
 numpy
+pyside6

@@ -1,30 +1,26 @@
-from datetime import timedelta, datetime, timezone
-from typing import Annotated
-import os
-
-from dotenv import load_dotenv
+from database.refresh_tokens import insert_refresh_token,get_refresh_token_record,revoke_refresh_token,revoke_all_refresh_tokens_for_user
+from auth.security import authenticate_user,create_access_token,create_refresh_token,get_password_hash,authenticate_device
 from fastapi import Depends, FastAPI, HTTPException, Request, status, WebSocket, WebSocketDisconnect
+from database.users import user_exists, create_user, get_user_by_email
+from database.pairing import insert_pairing_code, pair_device
+from auth.dependencies import get_current_active_user, User
+from slowapi import Limiter, _rate_limit_exceeded_handler
 from fastapi.security import OAuth2PasswordRequestForm
+from datetime import timedelta, datetime, timezone
+from database.connection import get_db_connection
+from database.devices import create_device_token
+from slowapi.errors import RateLimitExceeded
 from jwt.exceptions import InvalidTokenError
+from slowapi.util import get_remote_address
 from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel, EmailStr
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
-import jwt
+from dotenv import load_dotenv
+from typing import Annotated
 import psycopg2
 import secrets
-import websockets
 import asyncio
-
-from database.connection import get_db_connection
-from database.users import user_exists, create_user, get_user_by_email
-from database.refresh_tokens import (insert_refresh_token,get_refresh_token_record,revoke_refresh_token,revoke_all_refresh_tokens_for_user)
-from database.pairing import insert_pairing_code, pair_device
-from database.devices import create_device_token
-
-from auth.security import (authenticate_user,create_access_token,create_refresh_token,get_password_hash,authenticate_device)
-from auth.dependencies import get_current_active_user, get_current_device, User
+import jwt
+import os
 
 load_dotenv()
 
@@ -234,124 +230,40 @@ async def pair(request: Request, payload: DevicePairRequest):
         cur.close()
         conn.close()
 
-import psutil
 
-
-def get_cpu_temp():
-    temps = psutil.sensors_temperatures()
-    for entry in temps.get("coretemp", []):
-        if "Package" in entry.label:
-            return entry.current
-
-    core_temps = [e.current for e in temps.get("coretemp", [])]
-    return round(sum(core_temps) / len(core_temps), 1) if core_temps else None
-
-
-def get_all_temps():
-    temps = psutil.sensors_temperatures()
-    result = {}
-
-    for sensor_name, entries in temps.items():
-        result[sensor_name] = [
-            {
-                "label": entry.label or sensor_name,
-                "temperature": entry.current,
-            }
-            for entry in entries
-        ]
-
-    return result
-
-
-def get_fan_speeds():
-    fans = psutil.sensors_fans()
-    result = {}
-
-    for sensor_name, entries in fans.items():
-        result[sensor_name] = [
-            {
-                "label": entry.label or f"fan {i}",
-                "rpm": entry.current,
-            }
-            for i, entry in enumerate(entries)
-        ]
-
-    return result
-
-
-def get_battery_info():
-    battery = psutil.sensors_battery()
-
-    if battery is None:
-        return None
-
-    if (
-        battery.power_plugged
-        or battery.secsleft in (psutil.POWER_TIME_UNLIMITED, -1)
-    ):
-        status = "Charging"
-        time_remaining = "Charging"
-    else:
-        hours, remainder = divmod(battery.secsleft, 3600)
-        minutes = remainder // 60
-        status = "On battery"
-        time_remaining = f"{hours}h {minutes}m"
-
-    return {
-        "percent": round(battery.percent, 1),
-        "plugged_in": battery.power_plugged,
-        "status": status,
-        "time_remaining": time_remaining,
-    }
-
-
-def get_live_stats():
-    cpu_percent = psutil.cpu_percent(interval=1)
-    ram = psutil.virtual_memory()
-    disk = psutil.disk_usage("/")
-    print("live stats")
-    return {
-        "cpu": {
-            "usage": cpu_percent,
-            "temperature": get_cpu_temp(),
-        },
-        "memory": {
-            "usage": ram.percent,
-            "used_gb": round(ram.used / 1e9, 2),
-            "total_gb": round(ram.total / 1e9, 2),
-        },
-        "disk": {
-            "usage": disk.percent,
-            "used_gb": round(disk.used / 1e9, 2),
-            "total_gb": round(disk.total / 1e9, 2),
-        },
-        "temperatures": get_all_temps(),
-        "fans": get_fan_speeds(),
-        "battery": get_battery_info(),
-    }
-
+latest_stats = None
 @app.websocket("/ws/device")
 async def websocket_endpoint(websocket: WebSocket):
+    global latest_stats
     await websocket.accept()
+    device = await websocket.receive_json()
     if not authenticate_device("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmNTQ2MGUwNS02YmZhLTRkNDEtYTBiOC1lYWEyNWFmMDhlYmIiLCJ0eXBlIjoiZGV2aWNlIiwiZXhwIjoxNzg1MzIwMDY4fQ.9DONSHocslQJNsd7OL-bZOZA7ltW2biSOddcYxMXZnE"):
         await websocket.close()
         return print("Desktop disconnected")
          
-
     print("Desktop connected")
 
     try:
         while True:
-            # message = await websocket.receive_text()
-
-            # print("Received:", message)
-
-            # await websocket.send_text(f"Received: {message}")
-            await websocket.send_json(get_live_stats())
-            await asyncio.sleep(1)
+            latest_stats = await websocket.receive_json()
+            print(latest_stats)
 
     except WebSocketDisconnect:
         print("Desktop disconnected")
+
+
+@app.websocket("/ws/mobile")
+async def mobile_ws(websocket: WebSocket):
+    global latest_stats
+    await websocket.accept()
+    print("Phone connected")
+    try:
+        while True:
+            if latest_stats:
+                await websocket.send_json(latest_stats)
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        print("Phone disconnected")
 
 
 
