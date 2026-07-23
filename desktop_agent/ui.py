@@ -1,30 +1,25 @@
-from PySide6.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QWidget,
-    QLabel,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLineEdit,
-    QPushButton,
-    QStackedWidget,
-    QMessageBox,
-)
-from PySide6.QtGui import QIntValidator
+from PySide6.QtWidgets import QApplication,QMainWindow,QWidget,QLabel,QVBoxLayout,QHBoxLayout,QLineEdit,QPushButton,QStackedWidget,QMessageBox, QMenu,QStyle,QSystemTrayIcon
+from PySide6.QtGui import QIntValidator, QIcon,QAction
+from qasync import QEventLoop, asyncSlot
+from agent.main import ws_client
 from PySide6.QtCore import Qt
 import requests
-from agent.main import ws_client
+import platform
 import asyncio
-from qasync import QEventLoop, asyncSlot
+import socket
+import json
+import sys
+
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.ws_task = None
+        self.file_path = 'token.json'
         self.setWindowTitle("RemoteHub Agent")
         self.setFixedSize(420, 260)
-
+        
         self.stack = QStackedWidget()
         self.stack.addWidget(self.create_pair_page())
         self.stack.addWidget(self.create_connected_page())
@@ -170,22 +165,60 @@ class MainWindow(QMainWindow):
 
         self.connect_btn.setEnabled(False)
 
-        print(f"Pairing Code: {code}")
+        os_name = platform.system()
+        platform_info = platform.platform()
+        hostname = socket.gethostname()
 
-        # TODO: Call backend API here
         data = {
-            "code":code,
-            "hostname":'Ishaan',
-            'os':"Linux",
-            'platform':"Ubuntu"
+            "code": code,
+            "hostname": hostname,
+            "os": os_name,
+            "platform": platform_info,
         }
-        response = await asyncio.to_thread(requests.post,"http://127.0.0.1:8000/devices/pair",json=data,)
-        print(response.json())
-        result = response.json()
-        self.stack.setCurrentIndex(1)
-        self.connect_btn.setEnabled(True)
-        if self.ws_task is None:
-            self.ws_task = asyncio.create_task(ws_client(result['device_token']))
+
+        try:
+            response = await asyncio.to_thread(requests.post,"http://127.0.0.1:8000/devices/pair",json=data,timeout=10,)
+
+            response.raise_for_status()
+
+            result = response.json()
+
+            if "device_token" not in result:
+                self.show_error("Server returned an invalid response.")
+                return
+
+            self.validate_token(result)
+
+            self.stack.setCurrentIndex(1)
+
+            if self.ws_task is None:
+                self.ws_task = asyncio.create_task(ws_client(result["device_token"]))
+
+        except requests.exceptions.Timeout:
+            self.show_error("Connection timed out.")
+
+        except requests.exceptions.ConnectionError:
+            self.show_error("Unable to connect to the server.")
+
+        except requests.exceptions.HTTPError:
+            try:
+                error = response.json().get("detail", response.text)
+            except Exception:
+                error = response.text
+
+            self.show_error(error)
+
+        except requests.exceptions.RequestException as e:
+            self.show_error(str(e))
+
+        except json.JSONDecodeError:
+            self.show_error("Server returned an invalid response.")
+
+        except Exception as e:
+            self.show_error(f"Unexpected error:\n{e}")
+
+        finally:
+            self.connect_btn.setEnabled(True)
 
     @asyncSlot()
     async def disconnect(self):
@@ -201,16 +234,74 @@ class MainWindow(QMainWindow):
 
         self.stack.setCurrentIndex(0)
 
+    def validate_token(self, result):
+        try:
+            with open(self.file_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=4)
+
+        except OSError as e:
+            QMessageBox.critical(self,"Error",f"Unable to save token.\n{e}")
 
 
+app = QApplication(sys.argv)
+app.setQuitOnLastWindowClosed(False)
 
-app = QApplication()
-
-loop = QEventLoop(app)
-asyncio.set_event_loop(loop)
-
+# ---------------- Main Window ----------------
 window = MainWindow()
 window.show()
+
+# ---------------- Tray Icon ----------------
+style = app.style()
+icon = QIcon(style.standardIcon(QStyle.StandardPixmap.SP_ComputerIcon))
+
+tray = QSystemTrayIcon(icon, app)
+tray.setToolTip("RemoteHub Agent")
+
+
+def show_window():
+    window.showNormal()      # Restore if minimized
+    window.show()            # Show if hidden
+    window.raise_()          # Bring to front
+    window.activateWindow()  # Focus the window
+
+
+def hide_window():
+    window.hide()
+
+
+# Show window when tray icon is double-clicked
+def tray_activated(reason):
+    if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+        show_window()
+
+
+tray.activated.connect(tray_activated)
+
+# ---------------- Tray Menu ----------------
+menu = QMenu()
+
+action_connect = QAction("Connect", window)
+action_connect.triggered.connect(show_window)
+menu.addAction(action_connect)
+
+menu.addSeparator()
+
+action_hide = QAction("Hide", window)
+action_hide.triggered.connect(hide_window)
+menu.addAction(action_hide)
+
+menu.addSeparator()
+
+action_quit = QAction("Quit", window)
+action_quit.triggered.connect(app.quit)
+menu.addAction(action_quit)
+
+tray.setContextMenu(menu)
+tray.show()
+
+# ---------------- Event Loop ----------------
+loop = QEventLoop(app)
+asyncio.set_event_loop(loop)
 
 with loop:
     loop.run_forever()

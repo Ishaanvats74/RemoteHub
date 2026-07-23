@@ -236,8 +236,8 @@ latest_stats = None
 async def websocket_endpoint(websocket: WebSocket):
     global latest_stats
     await websocket.accept()
-    device = await websocket.receive_json()
-    if not authenticate_device("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmNTQ2MGUwNS02YmZhLTRkNDEtYTBiOC1lYWEyNWFmMDhlYmIiLCJ0eXBlIjoiZGV2aWNlIiwiZXhwIjoxNzg1MzIwMDY4fQ.9DONSHocslQJNsd7OL-bZOZA7ltW2biSOddcYxMXZnE"):
+    device_token = await websocket.receive_json()
+    if not authenticate_device(device_token['token']):
         await websocket.close()
         return print("Desktop disconnected")
          

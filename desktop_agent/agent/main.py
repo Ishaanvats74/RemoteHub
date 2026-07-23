@@ -94,8 +94,7 @@ def get_live_stats():
         "fans": get_fan_speeds(),
         "battery": get_battery_info(),
     }
-# The main function that will handle connection and communication
-# with the server
+
 URL = "ws://127.0.0.1:8000/ws/device"
 
 async def ws_client(token):
@@ -115,7 +114,3 @@ async def ws_client(token):
             }))
 
             await asyncio.sleep(1)
-
- 
-# # Start the connection
-# asyncio.run(ws_client())
