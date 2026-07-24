@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QMessageBox
-from agent.main import ws_client
+from desktop_agent.agent.main import ws_client
 from qasync import  asyncSlot
 import requests
 import platform
