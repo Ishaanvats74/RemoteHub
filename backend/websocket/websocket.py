@@ -3,13 +3,8 @@ from fastapi import WebSocket
 
 class ConnectionManager:
     def __init__(self):
-        # device_id -> websocket
         self.desktops = {}
-
-        # user_id -> list of phone websockets
         self.phones = {}
-
-        # user_id -> set of device_ids
         self.user_devices = {}
 
     async def connect_desktop(self, user_id: str, websocket: WebSocket):

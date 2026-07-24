@@ -33,4 +33,6 @@ def check_device(cur, token_hash):
     if not result:
         return False
     return True
-        
+
+
+
