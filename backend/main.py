@@ -1,14 +1,15 @@
 from database.refresh_tokens import insert_refresh_token,get_refresh_token_record,revoke_refresh_token,revoke_all_refresh_tokens_for_user
 from auth.security import authenticate_user,create_access_token,create_refresh_token,get_password_hash,authenticate_device
+from database.devices import create_device_token, update_last_seen, set_device_online,set_device_offline
 from fastapi import Depends, FastAPI, HTTPException, Request, status, WebSocket, WebSocketDisconnect
+from auth.dependencies import get_current_active_user, User, get_current_user
 from database.users import user_exists, create_user, get_user_by_email
 from database.pairing import insert_pairing_code, pair_device
-from auth.dependencies import get_current_active_user, User
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta, datetime, timezone
+from websocket.websocket import ConnectionManager
 from database.connection import get_db_connection
-from database.devices import create_device_token
 from slowapi.errors import RateLimitExceeded
 from jwt.exceptions import InvalidTokenError
 from slowapi.util import get_remote_address
@@ -36,21 +37,17 @@ class TokenPair(BaseModel):
     refresh_token: str
     token_type: str
 
-
 class RefreshRequest(BaseModel):
     refresh_token: str
-
 
 class AccessToken(BaseModel):
     access_token: str
     token_type: str
 
-
 class SignUpRequest(BaseModel):
     username: str
     email: EmailStr
     password: str
-
 
 class DevicePairRequest(BaseModel):
     code: str
@@ -61,6 +58,7 @@ class DevicePairRequest(BaseModel):
 
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI()
+manager = ConnectionManager()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
@@ -231,39 +229,88 @@ async def pair(request: Request, payload: DevicePairRequest):
         conn.close()
 
 
-latest_stats = None
-@app.websocket("/ws/device")
+@app.websocket("/ws/desktop")
 async def websocket_endpoint(websocket: WebSocket):
-    global latest_stats
     await websocket.accept()
-    device_token = await websocket.receive_json()
-    if not authenticate_device(device_token['token']):
-        await websocket.close()
-        return print("Desktop disconnected")
-         
-    print("Desktop connected")
-
     try:
+        auth_message = await websocket.receive_json()
+        device = authenticate_device(auth_message["token"])
+
+        if not device:
+            await websocket.close(code=1008)
+            return
+
+        await manager.connect_desktop(user_id=str(device["user_id"]), device_id=str(device["id"]), websocket=websocket)
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        try:
+            set_device_online(cur, device["id"])
+        except HTTPException:
+            raise
+        except (Exception, psycopg2.DatabaseError) as error:
+            raise HTTPException(status_code=500, detail=str(error))
+        finally:
+            cur.close()
+            conn.close()
+
+        print(f"{device['hostname']} connected")
+
         while True:
-            latest_stats = await websocket.receive_json()
-            print(latest_stats)
+            message = await websocket.receive_json()
+
+            match message["type"]:
+
+                case "telemetry":
+                    manager.update_telemetry(str(device["id"]),message["data"])
+                    await manager.send_to_user(str(device["user_id"]),message)
+
+                case "heartbeat":
+                    print("Heartbeat received")
+
+                case "command_result":
+                    await manager.send_to_user(str(device["user_id"]),message)
+
+                case "heartbeat":
+                    update_last_seen(device["id"])
+                    continue
+
+                case _:
+                    print("Unknown message")
 
     except WebSocketDisconnect:
-        print("Desktop disconnected")
+        manager.disconnect_desktop(str(device["user_id"]),str(device["id"]))
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        try:
+            set_device_offline(cur, device["id"])
+        except HTTPException:
+            raise
+        except (Exception, psycopg2.DatabaseError) as error:
+            raise HTTPException(status_code=500, detail=str(error))
+        finally:
+            cur.close()
+            conn.close()
+        
+        print(f"{device['hostname']} disconnected")
 
 
 @app.websocket("/ws/mobile")
 async def mobile_ws(websocket: WebSocket):
-    global latest_stats
     await websocket.accept()
-    print("Phone connected")
+    auth = await websocket.receive_json()
+    user = await get_current_user(auth["token"])
+    await manager.connect_mobile(str(user["id"]),websocket)
+
     try:
         while True:
-            if latest_stats:
-                await websocket.send_json(latest_stats)
-            await asyncio.sleep(1)
+            message = await websocket.receive_json()
+            if message["type"] == "command":
+                await manager.send_to_device(message["device_id"],message)
+
     except WebSocketDisconnect:
-        print("Phone disconnected")
+        manager.disconnect_mobile(str(user["id"]),websocket)
 
 
 

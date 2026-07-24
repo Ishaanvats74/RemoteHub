@@ -46,21 +46,24 @@ def create_refresh_token(data: dict, expires_delta: timedelta | None = None):
     return {"encoded_jwt": encoded_jwt, "expire": expire}
 
 
-def authenticate_device(token):
+def authenticate_device(token: str):
     token_hash = hash_token(token)
-    
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        user = check_device(cur,token_hash)
+        device = check_device(cur, token_hash)
     except Exception:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database error",
+        )
     finally:
         cur.close()
         conn.close()
-    print(user)
-    if not user:
-        return
-    return user
+
+    if device is None:
+        return None
+
+    return device
 
     

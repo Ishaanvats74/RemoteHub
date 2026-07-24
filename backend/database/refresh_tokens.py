@@ -2,10 +2,7 @@ from .utils import hash_token
 
 def insert_refresh_token(cur, user_id, expires_at, refresh_token):
     token_hash = hash_token(refresh_token)
-    cur.execute(
-        "INSERT INTO refresh_tokens (user_id, token_hash, revoked, expires_at) VALUES (%s, %s, %s, %s)",
-        (user_id, token_hash, False, expires_at)
-    )
+    cur.execute("INSERT INTO refresh_tokens (user_id, token_hash, revoked, expires_at) VALUES (%s, %s, %s, %s)",(user_id, token_hash, False, expires_at))
 
 def get_refresh_token_record(cur, refresh_token):
     token_hash = hash_token(refresh_token)

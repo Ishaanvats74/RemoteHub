@@ -66,11 +66,6 @@ async def get_current_active_user(current_user: Annotated[User, Depends(get_curr
 
 
 async def get_current_device(token: Annotated[str, Depends(oauth2_scheme)]):
-    """
-    Authenticates a desktop agent using its device token.
-    Mirrors get_current_user, but checks device-specific state
-    (token_hash / token_expires_at / status) instead of a user row.
-    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate device credentials",
@@ -91,11 +86,7 @@ async def get_current_device(token: Annotated[str, Depends(oauth2_scheme)]):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        cur.execute(
-            "SELECT id, user_id, hostname, os, platform, status, token_hash, token_expires_at "
-            "FROM devices WHERE id = %s",
-            (device_id,)
-        )
+        cur.execute("SELECT id, user_id, hostname, os, platform, status, token_hash, token_expires_at FROM devices WHERE id = %s",(device_id,))
         device = cur.fetchone()
     except Exception:
         raise HTTPException(status_code=500, detail="Database error")

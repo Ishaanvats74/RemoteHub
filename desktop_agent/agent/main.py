@@ -106,11 +106,20 @@ async def ws_client(token):
         }))
 
         while True:
-            usage = await asyncio.to_thread(get_live_stats)
+            stats = await asyncio.to_thread(get_live_stats)
 
             await ws.send(json.dumps({
-                "type": "stats",
-                "data": usage
+                "type": "telemetry",
+                "data": stats
             }))
 
             await asyncio.sleep(1)
+            
+# async def ws_client():
+#     async with websockets.connect(URL) as ws:
+
+#         await ws.send_json({
+#             "type": "heartbeat"
+#         })
+
+#         await asyncio.sleep(30)
