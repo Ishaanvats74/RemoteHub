@@ -1,21 +1,13 @@
-from PySide6.QtWidgets import QWidget,QLabel,QVBoxLayout,QHBoxLayout,QPushButton,QMessageBox
-from agent.main import ws_client
-from qasync import  asyncSlot
+from PySide6.QtWidgets import QWidget,QLabel,QVBoxLayout,QPushButton
 from PySide6.QtCore import Qt
-from pathlib import Path
-import asyncio
-
 
 
 class ConnectedPage(QWidget):
-    def __init__(self):
+    def __init__(self,controller):
         super().__init__()
+        self.controller = controller
 
-   
-
-    def create_connected_page(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
@@ -39,23 +31,8 @@ class ConnectedPage(QWidget):
         layout.addWidget(disconnect_btn)
         layout.addStretch()
 
-        return page
-
-    def show_error(self, message):
-        QMessageBox.warning(self, "Validation Error", message)
-
-    @asyncSlot()
-    async def disconnect(self):
-        if self.ws_task:
-            self.ws_task.cancel()
-
-            try:
-                await self.ws_task
-            except asyncio.CancelledError:
-                pass
-
-            self.ws_task = None
-
+    def disconnect(self):
+        self.controller.disconnect()
 
 
 
