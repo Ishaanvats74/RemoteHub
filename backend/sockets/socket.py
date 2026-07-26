@@ -21,7 +21,6 @@ class ConnectionManager:
     # -------------------------------------------------
 
     async def connect_desktop(self, user_id: str, device_id: str, websocket: WebSocket):
-        await websocket.accept()
 
         # Replace old connection if reconnecting
         old = self.devices.get(device_id)
@@ -49,8 +48,8 @@ class ConnectionManager:
     # -------------------------------------------------
 
     async def connect_mobile(self,user_id: str,websocket: WebSocket):
-        await websocket.accept()
         self.mobile_connections[user_id].add(websocket)
+        print("Mobile connected:", self.mobile_connections)
 
     def disconnect_mobile(self,user_id: str,websocket: WebSocket):
         if user_id not in self.mobile_connections:
@@ -97,7 +96,10 @@ class ConnectionManager:
             return False
 
     async def send_to_user(self,user_id: str,payload: dict):
+        print("Sending to user:", user_id)
+        print("Connected mobiles:", self.mobile_connections.keys())
         if user_id not in self.mobile_connections:
+            print("No mobile connected for this user!")
             return
 
         dead_connections = []

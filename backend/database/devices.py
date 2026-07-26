@@ -33,3 +33,37 @@ def set_device_online(cur, device_id):
 
 def set_device_offline(cur, device_id):
     cur.execute("UPDATE devices SET status = 'offline' WHERE id = %s ",(device_id,))
+
+
+def get_devices(cur, user_id):
+    cur.execute("""
+        SELECT
+            id,
+            hostname,
+            os,
+            platform,
+            status,
+            last_seen
+        FROM devices
+        WHERE user_id = %s
+        ORDER BY created_at DESC
+    """, (user_id,))
+
+    return cur.fetchall()
+
+def get_device(cur,id, user_id):
+    cur.execute("""
+       SELECT
+    id,
+    hostname,
+    os,
+    platform,
+    status,
+    last_seen,
+    created_at
+FROM devices
+WHERE id = %s
+  AND user_id = %s;
+    """, (id,user_id))
+
+    return cur.fetchall()

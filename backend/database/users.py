@@ -8,3 +8,7 @@ def create_user(cur, username, email, hashed_password):
 def get_user_by_email(cur, email):
     cur.execute("SELECT id, username, email, hashed_password FROM users WHERE email = %s",(email,))
     return cur.fetchone()
+
+def get_user_by_id(cur, id):
+    cur.execute("SELECT id, username, email, hashed_password FROM users WHERE id = %s",(id,))
+    return cur.fetchone()

@@ -1,8 +1,8 @@
 from PySide6.QtWidgets import QMainWindow,QApplication, QMenu,QStyle,QSystemTrayIcon,QStackedWidget
-from desktop_agent.controller.agent import AgentController
-from desktop_agent.pages.connectedPage import ConnectedPage
+from controller.agent import AgentController
+from pages.connectedPage import ConnectedPage
 from PySide6.QtGui import  QIcon,QAction
-from desktop_agent.pages.pairPage import PairPage
+from pages.pairPage import PairPage
 from qasync import QEventLoop
 from pathlib import Path
 import asyncio

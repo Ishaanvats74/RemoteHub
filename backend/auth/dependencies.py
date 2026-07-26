@@ -9,7 +9,7 @@ import os
 from dotenv import load_dotenv
 
 from database.connection import get_db_connection
-from database.users import get_user_by_email
+from database.users import get_user_by_id
 from database.utils import hash_token
 
 load_dotenv()
@@ -42,15 +42,16 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     if payload.get("type") != "access":
         raise credentials_exception
 
-    username = payload.get("sub")
-    if username is None:
+    user_id = payload.get("sub")
+    if user_id is None:
         raise credentials_exception
 
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
-        user = get_user_by_email(cur, username)
+        user = get_user_by_id(cur, user_id)
     except Exception:
+        conn.rollback()
         raise HTTPException(status_code=500, detail="Database error")
     finally:
         cur.close()
