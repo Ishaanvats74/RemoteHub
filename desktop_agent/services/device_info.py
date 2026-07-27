@@ -95,45 +95,4 @@ def get_live_stats():
         "battery": get_battery_info(),
     }
 
-URL = "ws://127.0.0.1:8000/ws/desktop"
 
-
-async def send_telemetry(ws):
-    while True:
-        stats = await asyncio.to_thread(get_live_stats)
-
-        await ws.send(json.dumps({
-            "type": "telemetry",
-            "data": stats
-        }))
-
-        await asyncio.sleep(1)
-
-async def receive_commands(ws):
-    while True:
-        message = json.loads(await ws.recv())
-
-        print("Received:", message)
-
-        if message["type"] == "command":
-            command = message["command"]
-
-            if command == "ping":
-                await ws.send(json.dumps({
-                    "type": "command_result",
-                    "command": "ping",
-                    "success": True,
-                    "message": "Desktop is alive!"
-                }))
-            
-async def ws_client(token):
-    async with websockets.connect(URL) as ws:
-
-        await ws.send(json.dumps({
-            "token": token
-        }))
-
-        await asyncio.gather(
-            send_telemetry(ws),
-            receive_commands(ws),
-        )

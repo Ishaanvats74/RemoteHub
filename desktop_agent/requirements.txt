@@ -6,3 +6,6 @@ numpy
 pyside6
 qasync
 pyinstaller
+platformdirs
+py-cpuinfo
+GPUtil
