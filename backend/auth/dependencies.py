@@ -7,41 +7,21 @@ from typing import Annotated
 import jwt
 import os
 from dotenv import load_dotenv
-
+from database.devices import get_device_by_id
 from database.connection import get_db_connection
 from database.users import get_user_by_id
 from database.utils import hash_token
+from psycopg2 import DatabaseError
 
 load_dotenv()
 
 SECRET_KEY = os.getenv('SECRET_KEY')
 ALGORITHM = os.getenv('ALGORITHM')
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-
-class TokenData(BaseModel):
-    username: str | None = None
-
-
-class User(BaseModel):
-    email: str
-    username: str | None = None
-
+credentials_exception = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid credentials",headers={"WWW-Authenticate": "Bearer"})
 
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except InvalidTokenError:
-        raise credentials_exception
-
-    if payload.get("type") != "access":
-        raise credentials_exception
-
+    payload = decode_token(token, "access")
     user_id = payload.get("sub")
     if user_id is None:
         raise credentials_exception
@@ -50,9 +30,11 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         user = get_user_by_id(cur, user_id)
-    except Exception:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+    except DatabaseError:
+        raise HTTPException(
+            status_code=500,
+            detail="Database error",
+        )
     finally:
         cur.close()
         conn.close()
@@ -62,23 +44,12 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     return user
 
 
-async def get_current_active_user(current_user: Annotated[User, Depends(get_current_user)]):
+async def get_current_active_user(current_user: Annotated[dict, Depends(get_current_user)]):
     return current_user
 
 
 async def get_current_device(token: Annotated[str, Depends(oauth2_scheme)]):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate device credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except InvalidTokenError:
-        raise credentials_exception
-
-    if payload.get("type") != "device":
-        raise credentials_exception
+    payload = decode_token(token, "device")
 
     device_id = payload.get("sub")
     if device_id is None:
@@ -86,11 +57,12 @@ async def get_current_device(token: Annotated[str, Depends(oauth2_scheme)]):
 
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)
+
     try:
-        cur.execute("SELECT id, user_id, hostname, os, platform, status, token_hash, token_expires_at FROM devices WHERE id = %s",(device_id,))
-        device = cur.fetchone()
-    except Exception:
-        raise HTTPException(status_code=500, detail="Database error")
+        device = get_device_by_id(cur, device_id)
+    except DatabaseError:
+        raise HTTPException(status_code=500,detail="Database error")
+    
     finally:
         cur.close()
         conn.close()
@@ -98,10 +70,19 @@ async def get_current_device(token: Annotated[str, Depends(oauth2_scheme)]):
     if device is None:
         raise credentials_exception
 
-    incoming_hash = hash_token(token)
-    if device["token_hash"] != incoming_hash:
+    if device["token_hash"] != hash_token(token):
         raise credentials_exception
-    if device["status"] != "active":
-        raise HTTPException(status_code=401, detail="Device has been revoked")
 
     return device
+
+
+def decode_token(token: str,expected_type: str) -> dict[str]:
+    try:
+        payload = jwt.decode(token,SECRET_KEY,algorithms=[ALGORITHM],)
+    except InvalidTokenError:
+        raise credentials_exception
+
+    if payload.get("type") != expected_type:
+        raise credentials_exception
+
+    return payload

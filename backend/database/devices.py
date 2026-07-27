@@ -19,7 +19,7 @@ def create_device_token(cur, device_id):
     return raw_token
 
 
-def check_device(cur, token_hash):
+def get_device_by_token_hash(cur, token_hash):
     cur.execute("SELECT id,user_id, hostname, os, platform, status, token_hash, token_expires_at FROM devices WHERE token_hash = %s ", (token_hash,))
     return cur.fetchone()
 
@@ -27,43 +27,23 @@ def update_last_seen(cur, device_id):
     cur.execute("UPDATE devices SET last_seen = %s, status = %s WHERE id = %s ",(datetime.now(timezone.utc),"online",device_id,))
 
 
-def set_device_online(cur, device_id):
-    cur.execute("UPDATE devices SET status = 'online' WHERE id = %s ",(device_id,))
+def set_device_status(cur, device_id, status):
+    cur.execute("UPDATE devices SET status = %s WHERE id = %s", (status, device_id))
 
 
-def set_device_offline(cur, device_id):
-    cur.execute("UPDATE devices SET status = 'offline' WHERE id = %s ",(device_id,))
-
-
-def get_devices(cur, user_id):
-    cur.execute("""
-        SELECT
-            id,
-            hostname,
-            os,
-            platform,
-            status,
-            last_seen
-        FROM devices
-        WHERE user_id = %s
-        ORDER BY created_at DESC
-    """, (user_id,))
-
+def get_devices(cur, user_id) -> list[dict]:
+    cur.execute("SELECT id, hostname, os, platform, status, last_seen FROM devices WHERE user_id = %s  ORDER BY created_at DESC", (user_id,))
     return cur.fetchall()
 
-def get_device(cur,id, user_id):
-    cur.execute("""
-       SELECT
-    id,
-    hostname,
-    os,
-    platform,
-    status,
-    last_seen,
-    created_at
-FROM devices
-WHERE id = %s
-  AND user_id = %s;
-    """, (id,user_id))
+def get_device(cur, device_id, user_id):
+    cur.execute("SELECT id,  hostname, os, platform, status,  last_seen, created_at FROM devices WHERE id = %s AND user_id = %s; ", (device_id,user_id)) 
+    device = cur.fetchone()
+    if device is None:
+        return None
 
-    return cur.fetchall()
+    return device
+
+
+def get_device_by_id(cur,device_id):
+    cur.execute("SELECT id, user_id, hostname, os, platform, status, token_hash, token_expires_at FROM devices WHERE id = %s",(device_id,))
+    return cur.fetchone()
