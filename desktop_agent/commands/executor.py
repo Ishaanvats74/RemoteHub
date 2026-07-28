@@ -2,11 +2,11 @@ import platform
 import subprocess
 from storage.token import load_token
 
-def cmd_execute(device_id: str, command: str):
+def cmd_execute(command: str):
     # Make sure the command is for this device
     data = load_token()
     print(data)
-    if device_id != data['device_id']:
+    if command['device_id'] != data['device_id']:
         return {
             "success": False,
             "message": "Command is not intended for this device."
