@@ -28,7 +28,7 @@ async def receive_commands(ws):
         if message.get("type") == "command":
             command = message["command"]
 
-            result = cmd_execute(command)
+            result = cmd_execute(message["command"])
 
             await ws.send(json.dumps({
                 "type": "command_result",
