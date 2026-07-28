@@ -1,15 +1,18 @@
-from telemetry import get_hardware_specs, get_live_stats
-from heartbeat import heartbeat
+from .telemetry import get_hardware_specs, get_live_stats
+from .heartbeat import heartbeat
 import websockets
 import asyncio
 import json
+from commands.executor import cmd_execute
+import traceback
+
 URL = "ws://127.0.0.1:8000/ws/desktop"
 MAX_DELAY = 30  
 
 async def send_telemetry(ws):
     await ws.send(json.dumps(get_hardware_specs()))
     while True:
-        stats = await asyncio.to_thread(get_live_stats())
+        stats = await asyncio.to_thread(get_live_stats)
 
         await ws.send(json.dumps({
             "type": "telemetry",
@@ -22,18 +25,18 @@ async def receive_commands(ws):
     while True:
         message = json.loads(await ws.recv())
 
-        print("Received:", message)
-
-        if message["type"] == "command":
+        if message.get("type") == "command":
             command = message["command"]
 
-            if command == "ping":
-                await ws.send(json.dumps({
-                    "type": "command_result",
-                    "command": "ping",
-                    "success": True,
-                    "message": "Desktop is alive!"
-                }))
+            result = cmd_execute(command)
+
+            await ws.send(json.dumps({
+                "type": "command_result",
+                "device_id": message["device_id"],
+                "command": command,
+                "success": result["success"],
+                "output": result["output"],
+            }))
             
 async def ws_client(token):
     delay = 1
@@ -63,6 +66,7 @@ async def ws_client(token):
             delay = min(delay * 2, MAX_DELAY)
 
         except Exception as e:
+            traceback.print_exc()
             print(f"Unexpected websocket error: {e}")
             await asyncio.sleep(delay)
             delay = min(delay * 2, MAX_DELAY)

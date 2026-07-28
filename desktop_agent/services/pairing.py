@@ -22,7 +22,7 @@ async def pairing(code):
         timeout=10,
     )
 
-    response.raise_for_status()
 
-    return response.json()
+
+    return response
   

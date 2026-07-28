@@ -1,5 +1,5 @@
-from desktop_agent.ui.pages.pairPage import PairPage
-from desktop_agent.ui.pages.connectedPage import ConnectedPage
+from .pages.pairPage import PairPage
+from .pages.connectedPage import ConnectedPage
 from pathlib import Path
 from PySide6.QtWidgets import QMainWindow,QStackedWidget
 

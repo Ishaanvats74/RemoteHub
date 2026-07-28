@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QApplication,QMenu,QStyle,QSystemTrayIcon,QMessageBox
-from desktop_agent.controller.agent_controller import AgentController
+from controller.agent_controller import AgentController
 from PySide6.QtGui import QIcon, QAction
 from ui.main_window import MainWindow
 from qasync import QEventLoop
@@ -24,7 +24,7 @@ window.connected_page.disconnect_requested.connect(controller.disconnect)
 controller.show_pair.connect(window.show_pair_page)
 controller.show_connected.connect(window.show_connected_page)
 
-controller.error.connect(lambda message: QMessageBox.warning(window,"RemoteHub",message))
+controller.show_error.connect(lambda message: QMessageBox.warning(window,"RemoteHub",message))
 
 window.show()
 

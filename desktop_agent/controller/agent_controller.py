@@ -1,18 +1,20 @@
-from PySide6.QtWidgets import QMessageBox
-from agent.info import ws_client
+from services.websocket import ws_client
 from qasync import asyncSlot
 from services.pairing import pairing
 from storage.token import save_token,load_token,delete_token
 import requests
-import platform
 import asyncio
-import socket
 import json
+from PySide6.QtCore import QObject, Signal
 
-
-class AgentController:
+class AgentController(QObject):
+    show_pair = Signal()
+    show_connected = Signal()
+    show_error = Signal(str)
     def __init__(self, window):
+        super().__init__()
         self.window = window
+        self.ws_task = None
 
     async def startup(self):
         try:
@@ -21,41 +23,42 @@ class AgentController:
             token = None
 
         if token and "device_token" in token:
-            if self.window.ws_task is None:
-                self.window.ws_task = asyncio.create_task(ws_client(token["device_token"]))
-            self.window.show_connected_page()
+            if self.ws_task is None:
+                self.ws_task = asyncio.create_task(ws_client(token["device_token"]))
+            self.show_connected.emit()
         else:
-            self.window.show_pair_page()
+            self.show_pair.emit()
 
     @asyncSlot(str)
     async def pair_device(self, code):
         try:
-            response = pairing(code)
-
-            if "device_token" not in response:
-                self.show_error("Server returned an invalid response.")
+            response = await pairing(code)
+            response.raise_for_status()
+            data = response.json()
+            if "device_token" not in data:
+                self.error("Server returned an invalid response.")
                 self.window.pair_page.set_loading(False)
                 return
 
             # Save token
-            save_token(response)
+            save_token(data)
             
-            if self.window.ws_task is None:
-                self.window.ws_task = asyncio.create_task(
-                    ws_client(response["device_token"])
+            if self.ws_task is None:
+                self.ws_task = asyncio.create_task(
+                    ws_client(data["device_token"])
                 )
 
             self.window.pair_page.set_loading(False)
             self.window.pair_page.clear_code()
-            self.window.show_connected_page()
+            self.show_connected.emit()
 
         except requests.exceptions.Timeout:
             self.window.pair_page.set_loading(False)
-            self.show_error("Connection timed out.")
+            self.error("Connection timed out.")
 
         except requests.exceptions.ConnectionError:
             self.window.pair_page.set_loading(False)
-            self.show_error("Unable to connect to the server.")
+            self.error("Unable to connect to the server.")
 
         except requests.exceptions.HTTPError:
             self.window.pair_page.set_loading(False)
@@ -65,37 +68,33 @@ class AgentController:
             except Exception:
                 error = response.text
 
-            self.show_error(error)
+            self.error(error)
 
         except requests.exceptions.RequestException as e:
             self.window.pair_page.set_loading(False)
-            self.show_error(str(e))
+            self.error(str(e))
 
         except json.JSONDecodeError:
             self.window.pair_page.set_loading(False)
-            self.show_error("Server returned an invalid response.")
+            self.error("Server returned an invalid response.")
 
         except Exception as e:
             self.window.pair_page.set_loading(False)
-            self.show_error(f"Unexpected error:\n{e}")
+            self.error(f"Unexpected error:\n{e}")
 
     @asyncSlot()
     async def disconnect(self):
-        if self.window.ws_task:
-            self.window.ws_task.cancel()
+        if self.ws_task:
+            self.ws_task.cancel()
 
             try:
-                await self.window.ws_task
+                await self.ws_task
             except asyncio.CancelledError:
                 pass
 
-            self.window.ws_task = None
+            self.ws_task = None
 
-        self.window.show_pair_page()
+        self.show_pair.emit()
 
-    def show_error(self, message):
-        QMessageBox.warning(
-            self.window,
-            "RemoteHub",
-            message,
-        )
+    def error(self, message):
+        self.show_error.emit(message)

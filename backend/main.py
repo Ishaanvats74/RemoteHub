@@ -1,5 +1,5 @@
 from database.refresh_tokens import insert_refresh_token,get_refresh_token_record,revoke_refresh_token,revoke_all_refresh_tokens_for_user
-from database.devices import create_device_token, update_last_seen, set_device_online,set_device_offline, get_device, get_devices
+from database.devices import create_device_token, update_last_seen, set_device_status, get_device, get_devices
 from auth.security import authenticate_user,create_access_token,create_refresh_token,get_password_hash,authenticate_device
 from fastapi import Depends, FastAPI, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from auth.dependencies import get_current_active_user, User, get_current_user
@@ -14,13 +14,14 @@ from slowapi.errors import RateLimitExceeded
 from jwt.exceptions import InvalidTokenError
 from slowapi.util import get_remote_address
 from psycopg2.extras import RealDictCursor
-from pydantic import BaseModel, EmailStr,Field, UUID
+from pydantic import BaseModel, EmailStr,Field
 from dotenv import load_dotenv
 from typing import Annotated
 import psycopg2
 import secrets
 import jwt
 import os
+from uuid import UUID
 
 load_dotenv()
 
@@ -75,15 +76,15 @@ class DeviceResponse(BaseModel):
     last_seen: datetime | None
     created_at: datetime
 
-# def user_rate_limit(request: Request):
-#     user = getattr(request.state, "user", None)
+def user_rate_limit(request: Request):
+    user = getattr(request.state, "user", None)
 
-#     if user:
-#         return str(user["id"])
+    if user:
+        return str(user["id"])
 
-#     return get_remote_address(request)
+    return get_remote_address(request)
 
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=user_rate_limit)
 app = FastAPI()
 manager = ConnectionManager()
 app.state.limiter = limiter
@@ -314,7 +315,7 @@ async def websocket_endpoint(websocket: WebSocket):
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         try:
-            set_device_online(cur, device["id"])
+            set_device_status(cur, device["id"],'active')
         except psycopg2.DatabaseError:
             print("Failed to mark device online.")
             await websocket.close(code=1011)
@@ -367,7 +368,7 @@ async def websocket_endpoint(websocket: WebSocket):
             cur = conn.cursor(cursor_factory=RealDictCursor)
 
             try:
-                set_device_offline(cur, device["id"])
+                set_device_status(cur, device["id"],'offline')
             except psycopg2.DatabaseError:
                 print("Failed to mark device offline.")
             finally:
@@ -416,13 +417,17 @@ async def mobile_ws(websocket: WebSocket):
     user = None
     try:
         auth = await websocket.receive_json()
+        print(auth)
         token = auth.get("token")
+        print("Token:", token)
         if token is None:
             await websocket.close(code=1008)
             return
 
         user = authenticate_user_token(token)
+        print("Authenticated user:", user)
         if user is None:
+            print("Authentication failed:")
             await websocket.close(code=1008)
             return
 
@@ -491,7 +496,7 @@ def get_single_device(device_id: str,current_user=Depends(get_current_user)):
         conn.close()
 
 
-from uuid import UUID
+
 
 @app.get("/devices/{device_id}/telemetry")
 def get_device_telemetry(device_id: UUID,current_user=Depends(get_current_user)):

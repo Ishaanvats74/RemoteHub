@@ -20,6 +20,10 @@ ALGORITHM = os.getenv('ALGORITHM')
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 credentials_exception = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid credentials",headers={"WWW-Authenticate": "Bearer"})
 
+class User(BaseModel):
+    email: str
+    username:str
+    
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     payload = decode_token(token, "access")
     user_id = payload.get("sub")
