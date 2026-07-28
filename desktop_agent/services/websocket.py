@@ -28,14 +28,14 @@ async def receive_commands(ws):
         if message.get("type") == "command":
             command = message["command"]
 
-            result = cmd_execute(message["command"])
+            result = cmd_execute(message)
 
             await ws.send(json.dumps({
                 "type": "command_result",
                 "device_id": message["device_id"],
                 "command": command,
-                "success": result["success"],
-                "output": result["output"],
+                # "success": result["success"],
+                # "output": result["output"],
             }))
             
 async def ws_client(token):

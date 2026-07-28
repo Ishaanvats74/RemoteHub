@@ -16,7 +16,7 @@ def cmd_execute(command):
     system = platform.system()
 
     try:
-        match command:
+        match command['command']:
 
             # ---------------- Shutdown ----------------
 
