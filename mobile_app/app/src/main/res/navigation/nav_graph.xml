@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/signupFragment">
+
+    <fragment
+        android:id="@+id/signupFragment"
+        android:name="com.example.remotehub.ui.SignupFragment"
+        android:label="Sign Up" />
+
+    <fragment
+        android:id="@+id/signinFragment"
+        android:name="com.example.remotehub.ui.SigninFragment"
+        android:label="Sign In" />
+
+    <fragment
+        android:id="@+id/homeFragment"
+        android:name="com.example.remotehub.ui.home.HomeFragment"
+        android:label="Home" />
+
+    <!-- Signup to Signin -->
+    <action
+        android:id="@+id/action_signup_to_signin"
+        app:destination="@id/signinFragment" />
+
+    <!-- Signup to Home -->
+    <action
+        android:id="@+id/action_signup_to_home"
+        app:destination="@id/homeFragment"
+        app:popUpTo="@id/signupFragment"
+        app:popUpToInclusive="true" />
+
+    <action
+        android:id="@+id/action_signin_to_signup"
+        app:destination="@id/signupFragment" />
+
+    <action
+        android:id="@+id/action_signin_to_home"
+        app:destination="@id/homeFragment"
+        app:popUpTo="@id/signinFragment"
+        app:popUpToInclusive="true" />
+
+</navigation>
