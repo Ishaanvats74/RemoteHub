@@ -19,24 +19,22 @@
         android:name="com.example.remotehub.ui.home.HomeFragment"
         android:label="Home" />
 
-    <!-- Signup to Signin -->
     <action
-        android:id="@+id/action_signup_to_signin"
+        android:id="@+id/action_signupFragment_to_signinFragment"
         app:destination="@id/signinFragment" />
 
-    <!-- Signup to Home -->
     <action
-        android:id="@+id/action_signup_to_home"
+        android:id="@+id/action_signupFragment_to_homeFragment"
         app:destination="@id/homeFragment"
         app:popUpTo="@id/signupFragment"
         app:popUpToInclusive="true" />
 
     <action
-        android:id="@+id/action_signin_to_signup"
+        android:id="@+id/action_signinFragment_to_signupFragment"
         app:destination="@id/signupFragment" />
 
     <action
-        android:id="@+id/action_signin_to_home"
+        android:id="@+id/action_signinFragment_to_homeFragment"
         app:destination="@id/homeFragment"
         app:popUpTo="@id/signinFragment"
         app:popUpToInclusive="true" />

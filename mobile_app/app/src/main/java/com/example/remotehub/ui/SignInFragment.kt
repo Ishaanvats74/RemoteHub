@@ -57,11 +57,11 @@ class SigninFragment : Fragment() {
             ).show()
 
             // Navigate to home
-            findNavController().navigate(R.id.action_signin_to_home)
+            findNavController().navigate(R.id.action_signinFragment_to_homeFragment)
         }
 
         signupLink.setOnClickListener {
-            findNavController().navigate(R.id.action_signin_to_signup)
+            findNavController().navigate(R.id.action_signinFragment_to_signupFragment)
         }
     }
 }

@@ -9,7 +9,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Sign Up"
+        android:text="@string/sign_up"
         android:textSize="32sp"
         android:textStyle="bold"
         android:textColor="@android:color/black"
@@ -24,7 +24,7 @@
             android:id="@+id/emailEditText"
             android:layout_width="match_parent"
             android:layout_height="50dp"
-            android:hint="Email"
+            android:hint="@string/email"
             android:inputType="textEmailAddress"
             android:autofillHints="emailAddress"
             android:padding="12dp" />
@@ -39,7 +39,7 @@
             android:id="@+id/passwordEditText"
             android:layout_width="match_parent"
             android:layout_height="50dp"
-            android:hint="Password"
+            android:hint="@string/password"
             android:inputType="textPassword"
             android:autofillHints="password"
             android:padding="12dp" />
@@ -49,7 +49,7 @@
         android:id="@+id/signUpButton"
         android:layout_width="match_parent"
         android:layout_height="50dp"
-        android:text="Sign Up"
+        android:text="@string/sign_up"
         android:textSize="16sp" />
 
     <LinearLayout
@@ -61,13 +61,13 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Already have account? " />
+            android:text="@string/already_have_account" />
 
         <TextView
             android:id="@+id/signin_link"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Sign In"
+            android:text="@string/sign_in"
             android:textColor="@android:color/holo_blue_dark"
             android:textStyle="bold" />
     </LinearLayout>
