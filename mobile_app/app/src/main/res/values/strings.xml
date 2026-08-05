@@ -7,4 +7,35 @@
     <string name="don_t_have_account">Don\'t have account?</string>
     <string name="sign_up">Sign Up</string>
     <string name="already_have_account">Already have account?</string>
+    <!-- Greeting -->
+    <string name="good_evening_ishaan">Good Evening, Ishaan</string>
+
+    <!-- Section Headers -->
+    <string name="my_devices">My Devices</string>
+
+    <!-- Status Indicators (Text Version - if needed) -->
+    <string name="green_circle">● Online</string>
+    <string name="red_circle">● Offline</string>
+
+    <!-- Device Names -->
+    <string name="msi_gf63">MSI GF63 Thin 10SC</string>
+    <string name="windows_11">Windows 11 Desktop</string>
+
+    <!-- Operating Systems -->
+    <string name="ubuntu_24_04">Ubuntu 24.04 LTS</string>
+
+    <!-- Last Seen Status -->
+    <string name="last_seen_just_now">Just now</string>
+    <string name="last_seen_2_hours_ago">2 hours ago</string>
+
+    <!-- Buttons -->
+    <string name="pair_new_device">Pair New Device</string>
+
+    <!-- Status Badges -->
+    <string name="status_online">Online</string>
+    <string name="status_offline">Offline</string>
+    <string name="online">Online</string>
+    <string name="windows_device">Windows Device</string>
+    <string name="offline">Offline</string>
+    <string name="remotehub_logo">RemoteHub Logo</string>
 </resources>

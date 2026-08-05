@@ -1,5 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
+    <!-- ============================================ -->
+    <!-- BACKGROUND COLORS -->
+    <!-- ============================================ -->
+    <color name="light_bg">#F8F9FA</color>
+    <color name="white_bg">#FFFFFF</color>
+
+    <!-- ============================================ -->
+    <!-- TEXT COLORS -->
+    <!-- ============================================ -->
+    <color name="dark_text">#1A1A1A</color>
+    <color name="gray_text">#757575</color>
+    <color name="light_gray_text">#BDBDBD</color>
+
+    <!-- ============================================ -->
+    <!-- STATUS INDICATOR COLORS -->
+    <!-- (Used in drawable files) -->
+    <!-- ============================================ -->
+    <!-- Green: Online Status -->
+    <color name="green_accent">#4CAF50</color>
+    <color name="green_light">#81C784</color>
+    <color name="green_dark">#388E3C</color>
+
+    <!-- Red: Offline Status -->
+    <color name="red_accent">#F44336</color>
+    <color name="red_light">#EF5350</color>
+    <color name="red_dark">#D32F2F</color>
+
+    <!-- ============================================ -->
+    <!-- BUTTON COLORS -->
+    <!-- (Used in bg_button_primary.xml) -->
+    <!-- ============================================ -->
+    <color name="button_primary">#6200EE</color>
+    <color name="button_primary_dark">#3700B3</color>
+    <color name="button_primary_light">#7C4DFF</color>
+    <color name="button_text">#FFFFFF</color>
+
+    <!-- ============================================ -->
+    <!-- BADGE COLORS -->
+    <!-- (Used in bg_green_badge.xml & bg_red_badge.xml) -->
+    <!-- ============================================ -->
+    <!-- Green Badge Background (Online) -->
+    <color name="badge_green_bg">#4CAF50</color>
+    <color name="badge_green_text">#FFFFFF</color>
+
+    <!-- Red Badge Background (Offline) -->
+    <color name="badge_red_bg">#F44336</color>
+    <color name="badge_red_text">#FFFFFF</color>
+
+    <!-- ============================================ -->
+    <!-- CIRCLE COLORS -->
+    <!-- (Used in circle_green.xml & circle_red.xml) -->
+    <!-- ============================================ -->
+    <!-- Green Circle (Online Indicator) -->
+    <color name="circle_green">#4CAF50</color>
+
+    <!-- Red Circle (Offline Indicator) -->
+    <color name="circle_red">#F44336</color>
+
+    <!-- ============================================ -->
+    <!-- ANDROID DEFAULT COLORS -->
+    <!-- ============================================ -->
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="transparent">#00000000</color>
 </resources>
