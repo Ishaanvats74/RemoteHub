@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">remotehub</string>
+    <string name="my_devices">My Devices</string>
+    <string name="no_devices_connected_yet">No devices connected yet.</string>
+</resources>
