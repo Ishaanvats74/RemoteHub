@@ -1,5 +1,8 @@
 fastapi[standard]
 pyjwt
 pwdlib[argon2]
-psycopg2-binary
 slowapi
+psycopg[binary] 
+psycopg2-binary 
+asyncpg 
+python-dotenv
