@@ -178,7 +178,10 @@ def get_hardware_specs() -> Dict[str, Any]:
 
 def get_cpu_temp():
     """Get CPU package temperature or average"""
-    temps = psutil.sensors_temperatures()
+    if hasattr(psutil, "sensors_temperatures"):
+        temps = psutil.sensors_temperatures()
+    else:
+        return 
     for entry in temps.get("coretemp", []):
         if "Package" in entry.label:
             return entry.current
@@ -189,7 +192,10 @@ def get_cpu_temp():
 
 def get_all_temps():
     """Get all sensor temperatures"""
-    temps = psutil.sensors_temperatures()
+    if hasattr(psutil, "sensors_temperatures"):
+        temps = psutil.sensors_temperatures()
+    else:
+        return {}
     result = {}
     for sensor_name, entries in temps.items():
         result[sensor_name] = [
@@ -204,7 +210,12 @@ def get_all_temps():
 
 def get_fan_speeds():
     """Get fan RPM data"""
-    fans = psutil.sensors_fans()
+    fans = {}
+    if hasattr(psutil, "sensors_fans"):
+        try:
+            fans = psutil.sensors_fans()
+        except Exception:
+            fans = {}
     result = {}
     for sensor_name, entries in fans.items():
         result[sensor_name] = [
@@ -240,11 +251,33 @@ def get_battery_info():
     }
 
 
+def get_gpu_live():
+    """Get real-time GPU stats (load, temp, memory) if available"""
+    try:
+        import GPUtil
+        gpus = GPUtil.getGPUs()
+        if gpus:
+            gpu = gpus[0]
+            return {
+                "name": gpu.name,
+                "usage": round(gpu.load * 100, 1),
+                "temperature": gpu.temperature,
+                "memory_used_mb": round(gpu.memoryUsed, 1),
+                "memory_total_mb": round(gpu.memoryTotal, 1),
+            }
+    except Exception:
+        pass
+    return None
+
+
 def get_live_stats():
     """Get real-time monitoring stats"""
-    cpu_percent = psutil.cpu_percent(interval=1)
+    cpu_percent = psutil.cpu_percent(interval=None)
     ram = psutil.virtual_memory()
-    disk = psutil.disk_usage("/")
+    try:
+        disk = psutil.disk_usage("C:\\") if platform.system() == "Windows" else psutil.disk_usage("/")
+    except Exception:
+        disk = psutil.disk_usage("/")
     
     return {
         "cpu": {
@@ -261,6 +294,7 @@ def get_live_stats():
             "used_gb": round(disk.used / 1e9, 2),
             "total_gb": round(disk.total / 1e9, 2),
         },
+        "gpu": get_gpu_live(),
         "temperatures": get_all_temps(),
         "fans": get_fan_speeds(),
         "battery": get_battery_info(),
