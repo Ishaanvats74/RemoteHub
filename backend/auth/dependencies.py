@@ -1,7 +1,7 @@
 from fastapi.security import OAuth2PasswordBearer
 from fastapi import Depends, HTTPException, status
 from jwt.exceptions import InvalidTokenError
-from psycopg2.extras import RealDictCursor
+from psycopg.rows import dict_row
 from pydantic import BaseModel
 from typing import Annotated
 import jwt
@@ -31,7 +31,7 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
         raise credentials_exception
 
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
     try:
         user = get_user_by_id(cur, user_id)
     except DatabaseError:
@@ -60,7 +60,7 @@ async def get_current_device(token: Annotated[str, Depends(oauth2_scheme)]):
         raise credentials_exception
 
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         device = get_device_by_id(cur, device_id)

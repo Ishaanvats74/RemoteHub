@@ -2,7 +2,7 @@ from database.devices import get_device_by_token_hash
 from auth.dependencies import decode_token
 from datetime import datetime, timedelta, timezone
 from database.connection import get_db_connection
-from psycopg2.extras import RealDictCursor
+from psycopg.rows import dict_row
 from fastapi import HTTPException, status
 from database.utils import hash_token
 from psycopg2 import DatabaseError
@@ -58,7 +58,7 @@ def authenticate_device(token: str):
         return None
     token_hash = hash_token(token)
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
     try:
         device = get_device_by_token_hash(cur, token_hash)
     except DatabaseError:

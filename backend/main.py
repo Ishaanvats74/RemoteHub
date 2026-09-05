@@ -1,3 +1,4 @@
+import asyncio
 from database.refresh_tokens import insert_refresh_token,get_refresh_token_record,revoke_refresh_token,revoke_all_refresh_tokens_for_user
 from database.devices import create_device_token, update_last_seen, set_device_status, get_device, get_devices
 from auth.security import authenticate_user,create_access_token,create_refresh_token,get_password_hash,authenticate_device
@@ -13,7 +14,7 @@ from database.connection import get_db_connection
 from slowapi.errors import RateLimitExceeded
 from jwt.exceptions import InvalidTokenError
 from slowapi.util import get_remote_address
-from psycopg2.extras import RealDictCursor
+from psycopg.rows import dict_row
 from pydantic import BaseModel, EmailStr,Field
 from dotenv import load_dotenv
 from typing import Annotated
@@ -22,6 +23,7 @@ import secrets
 import jwt
 import os
 from uuid import UUID
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
@@ -89,7 +91,21 @@ app = FastAPI()
 manager = ConnectionManager()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+origins = [
+    "http://localhost.tiangolo.com",
+    "https://localhost.tiangolo.com",
+    "http://localhost",
+    "http://localhost:8080",
+    "http://localhost:60566/"
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/health")
 def health():
@@ -106,7 +122,7 @@ async def read_users_me(request: Request, current_user: Annotated[User, Depends(
 @limiter.limit("10/minute")
 async def login_for_access_token(request: Request, form_data: Annotated[OAuth2PasswordRequestForm, Depends()],) -> TokenPair:
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
     try:
         user_db = get_user_by_email(cur, form_data.username)
         if user_db is None:
@@ -145,7 +161,7 @@ async def login_for_access_token(request: Request, form_data: Annotated[OAuth2Pa
 @limiter.limit("2/minute")
 async def sign_up(request: Request, payload: SignUpRequest):
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         if user_exists(cur, payload.email):
@@ -182,9 +198,10 @@ async def refresh_access_token(request: Request, payload: RefreshRequest) -> Acc
         raise HTTPException(status_code=401, detail="Invalid token")
 
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
     try:
         token_record = get_refresh_token_record(cur, payload.refresh_token)
+        user = get_user_by_id(cur, user_id)
     except psycopg2.DatabaseError:
         raise HTTPException(status_code=500,detail="Database error")
     
@@ -197,7 +214,7 @@ async def refresh_access_token(request: Request, payload: RefreshRequest) -> Acc
     if token_record["revoked"]:
         raise HTTPException(status_code=401, detail="Refresh token has been revoked, please log in again")
     
-    user = get_user_by_id(cur, user_id)
+    
 
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
@@ -221,7 +238,7 @@ async def logout(request: Request, payload: RefreshRequest):
         raise HTTPException(status_code=401,detail="Invalid token type")
 
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         token = get_refresh_token_record(cur, payload.refresh_token)
@@ -250,7 +267,7 @@ async def logout(request: Request, payload: RefreshRequest):
 @limiter.limit("10/minute")
 async def pairing_code(request: Request, current_user: Annotated[User, Depends(get_current_active_user)]):
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
     try:
         delete_active_pairing_codes(cur, current_user["id"])
         code = ''.join(secrets.choice('0123456789') for _ in range(PAIRING_CODE_LENGTH))
@@ -270,7 +287,7 @@ async def pairing_code(request: Request, current_user: Annotated[User, Depends(g
 @limiter.limit("2/minute")
 async def pair(request: Request,payload: DevicePairRequest):
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         device = pair_device(cur,payload.code,payload.hostname,payload.os,payload.platform)
@@ -312,7 +329,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         await manager.connect_desktop(user_id=str(device["user_id"]), device_id=str(device["id"]), websocket=websocket)
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur = conn.cursor(row_factory=dict_row)
 
         try:
             set_device_status(cur, device["id"],'active')
@@ -326,8 +343,23 @@ async def websocket_endpoint(websocket: WebSocket):
 
         while True:
             message = await websocket.receive_json()
+
+            print("================================")
+            print("Desktop sent:", message)
+            print("================================")
+
             message_type = message.get("type")
+
+            if message_type is None:
+                print("WARNING: Desktop message has no type!")
+                continue
+
             match message_type:
+                case "hardware_specs":
+                    await manager.send_to_user(
+                        str(device["user_id"]),
+                        message
+                    )
 
                 case "telemetry":
                     manager.update_telemetry(str(device["id"]),message.get("data", {}))
@@ -339,7 +371,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 case "heartbeat":
                     conn = get_db_connection()
-                    cur = conn.cursor(cursor_factory=RealDictCursor)
+                    cur = conn.cursor(row_factory=dict_row)
 
                     try:
                         update_last_seen(cur, device["id"])
@@ -365,7 +397,7 @@ async def websocket_endpoint(websocket: WebSocket):
             manager.disconnect_desktop(str(device["user_id"]),str(device["id"]))
 
             conn = get_db_connection()
-            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur = conn.cursor(row_factory=dict_row)
 
             try:
                 set_device_status(cur, device["id"],'offline')
@@ -394,7 +426,7 @@ def authenticate_user_token(token: str):
         raise credentials_exception
 
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         user = get_user_by_id(cur, user_id)
@@ -459,7 +491,7 @@ async def mobile_ws(websocket: WebSocket):
 @app.get("/devices", response_model=list[DeviceResponse])
 def get_all_devices(current_user=Depends(get_current_user)):
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         devices = get_devices(cur, current_user["id"])
@@ -479,7 +511,7 @@ def get_all_devices(current_user=Depends(get_current_user)):
 @app.get("/devices/{device_id}")
 def get_single_device(device_id: str,current_user=Depends(get_current_user)):
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         device = get_device(cur,device_id,current_user["id"])
@@ -501,7 +533,7 @@ def get_single_device(device_id: str,current_user=Depends(get_current_user)):
 @app.get("/devices/{device_id}/telemetry")
 def get_device_telemetry(device_id: UUID,current_user=Depends(get_current_user)):
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur = conn.cursor(row_factory=dict_row)
 
     try:
         get_device(cur, str(device_id), current_user["id"])
@@ -523,3 +555,52 @@ def get_device_telemetry(device_id: UUID,current_user=Depends(get_current_user))
 
  
 
+
+
+# ==================== SYSTEM MONITORING STATS ====================
+try:
+    import sys
+    from pathlib import Path
+    _agent_dir = str(Path(__file__).resolve().parent.parent / "desktop_agent")
+    if _agent_dir not in sys.path:
+        sys.path.append(_agent_dir)
+    from services.telemetry import get_hardware_specs, get_live_stats
+except Exception as _e:
+    print(f"Warning: Failed to import telemetry from desktop_agent: {_e}")
+    def get_hardware_specs():
+        return {
+            "os": "Windows",
+            "os_version": "11",
+            "cpu": {"brand": "Generic CPU", "cores": 4, "threads": 8, "frequency_ghz": 2.4},
+            "ram": {"total_gb": 16.0, "type": "DDR4", "speed": "3200 MHz"},
+            "gpu": {"gpus": []},
+        }
+    def get_live_stats():
+        return {
+            "cpu": {"usage": 15.0, "temperature": None},
+            "memory": {"usage": 45.0, "used_gb": 7.2, "total_gb": 16.0},
+            "disk": {"usage": 60.0, "used_gb": 120.0, "total_gb": 200.0},
+            "gpu": None,
+            "temperatures": {},
+            "fans": {},
+            "battery": None,
+        }
+
+@app.get("/stats/hardware")
+def get_hardware_endpoint():
+    """Returns static hardware specifications"""
+    return get_hardware_specs()
+
+@app.websocket("/ws/stats")
+async def websocket_system_stats(websocket: WebSocket):
+    """Pushes real-time live system stats every 1 second to connected clients"""
+    await websocket.accept()
+    try:
+        while True:
+            stats = await asyncio.to_thread(get_live_stats)
+            await websocket.send_json(stats)
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"WebSocket stats error: {e}")

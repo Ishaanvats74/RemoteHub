@@ -32,7 +32,23 @@ def set_device_status(cur, device_id, status):
 
 
 def get_devices(cur, user_id) -> list[dict]:
-    cur.execute("SELECT id, hostname, os, platform, status, last_seen FROM devices WHERE user_id = %s  ORDER BY created_at DESC", (user_id,))
+    cur.execute(
+        """
+        SELECT
+            id,
+            user_id,
+            hostname,
+            os,
+            platform,
+            status,
+            last_seen,
+            created_at
+        FROM devices
+        WHERE user_id = %s
+        ORDER BY created_at DESC
+        """,
+        (user_id,)
+    )
     return cur.fetchall()
 
 def get_device(cur, device_id, user_id):
