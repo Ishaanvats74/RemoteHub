@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <!-- Primary button background color -->
-    <solid android:color="@color/button_primary" />
-    <!-- Rounded corners for modern look -->
-    <corners android:radius="8dp" />
-</shape>
