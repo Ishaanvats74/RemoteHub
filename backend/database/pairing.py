@@ -17,7 +17,7 @@ def pair_device(cur, code, hostname, os_name, platform):
     if pairing_row["expires_at"] < datetime.now(timezone.utc):
         raise HTTPException(400, "Pairing code expired")
 
-    cur.execute("INSERT INTO devices (user_id, hostname, os, platform, status) VALUES (%s, %s, %s, %s, %s) RETURNING id",(pairing_row["user_id"],hostname,os_name,platform,"offline"))
+    cur.execute("INSERT INTO devices (user_id, hostname, os, platform, status) VALUES (%s, %s, %s, %s, %s) RETURNING id, user_id, hostname, os, platform",(pairing_row["user_id"],hostname,os_name,platform,"offline"))
     device = cur.fetchone()
     cur.execute("DELETE FROM pairing_codes WHERE code = %s",(code,))
     return device

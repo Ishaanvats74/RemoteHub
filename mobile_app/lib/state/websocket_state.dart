@@ -24,17 +24,30 @@ final wsStatusStreamProvider = StreamProvider<WsConnectionStatus>((ref) {
   return manager.statusStream;
 });
 
-final wsCommandResultStreamProvider = StreamProvider<WsCommandResultMessage>((ref) {
+final wsCommandResultStreamProvider =
+    StreamProvider<WsCommandResultMessage>((ref) {
   final manager = ref.watch(webSocketManagerProvider);
   return manager.commandResultStream;
 });
 
-final wsTelemetryStreamProvider = StreamProvider<WsTelemetryMessage>((ref) {
+final wsTelemetryStreamProvider =
+    StreamProvider<WsTelemetryMessage>((ref) {
   final manager = ref.watch(webSocketManagerProvider);
   return manager.telemetryStream;
 });
 
-final wsDeviceStatusStreamProvider = StreamProvider<WsDeviceStatusMessage>((ref) {
+final wsDeviceStatusStreamProvider =
+    StreamProvider<WsDeviceStatusMessage>((ref) {
   final manager = ref.watch(webSocketManagerProvider);
   return manager.deviceStatusStream;
+});
+
+// -------------------------------------------------
+// Device Paired
+// -------------------------------------------------
+
+final wsDevicePairedStreamProvider =
+    StreamProvider<WsDevicePairedMessage>((ref) {
+  final manager = ref.watch(webSocketManagerProvider);
+  return manager.devicePairedStream;
 });

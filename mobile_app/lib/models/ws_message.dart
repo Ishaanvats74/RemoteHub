@@ -40,16 +40,26 @@ sealed class WsIncomingMessage {
 
   factory WsIncomingMessage.fromJson(Map<String, dynamic> json) {
     final type = json['type'] as String? ?? '';
+
     switch (type) {
       case 'command_result':
         return WsCommandResultMessage.fromJson(json);
+
       case 'telemetry':
         return WsTelemetryMessage.fromJson(json);
+
       case 'device_status':
       case 'status':
         return WsDeviceStatusMessage.fromJson(json);
+
+      case 'device_paired':
+        return WsDevicePairedMessage.fromJson(json);
+
       default:
-        return WsGenericMessage(type: type, payload: json);
+        return WsGenericMessage(
+          type: type,
+          payload: json,
+        );
     }
   }
 }
@@ -73,8 +83,11 @@ class WsCommandResultMessage extends WsIncomingMessage {
     return WsCommandResultMessage(
       deviceId: (json['device_id'] ?? '').toString(),
       command: json['command'] as String? ?? '',
-      success: json['success'] == true || json['status'] == 'ok' || json['status'] == 'success',
-      message: json['message'] as String? ?? json['error'] as String?,
+      success: json['success'] == true ||
+          json['status'] == 'ok' ||
+          json['status'] == 'success',
+      message: json['message'] as String? ??
+          json['error'] as String?,
       timestamp: DateTime.now(),
     );
   }
@@ -122,6 +135,35 @@ class WsDeviceStatusMessage extends WsIncomingMessage {
   }
 }
 
+// -------------------------------------------------
+// Device Paired
+// -------------------------------------------------
+
+class WsDevicePairedMessage extends WsIncomingMessage {
+  final String deviceId;
+  final String hostname;
+  final String? os;
+  final String? platform;
+
+  WsDevicePairedMessage({
+    required this.deviceId,
+    required this.hostname,
+    this.os,
+    this.platform,
+  });
+
+  factory WsDevicePairedMessage.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return WsDevicePairedMessage(
+      deviceId: (json['device_id'] ?? '').toString(),
+      hostname: (json['hostname'] ?? 'Unknown Device').toString(),
+      os: json['os']?.toString(),
+      platform: json['platform']?.toString(),
+    );
+  }
+}
+
 class WsGenericMessage extends WsIncomingMessage {
   final String type;
   final Map<String, dynamic> payload;
@@ -131,3 +173,4 @@ class WsGenericMessage extends WsIncomingMessage {
     required this.payload,
   });
 }
+

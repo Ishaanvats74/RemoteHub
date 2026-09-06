@@ -284,25 +284,61 @@ async def pairing_code(request: Request, current_user: Annotated[User, Depends(g
         cur.close()
         conn.close()
 
-
-@app.post("/devices/pair",response_model=PairDeviceResponse,status_code=status.HTTP_201_CREATED,)
+@app.post(
+    "/devices/pair",
+    response_model=PairDeviceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 @limiter.limit("2/minute")
-async def pair(request: Request,payload: DevicePairRequest):
+async def pair(request: Request, payload: DevicePairRequest):
     conn = get_db_connection()
     cur = conn.cursor(row_factory=dict_row)
 
     try:
-        device = pair_device(cur,payload.code,payload.hostname,payload.os,payload.platform)
+        # 1. Verify pairing code and create/register the device
+        device = pair_device(
+            cur,
+            payload.code,
+            payload.hostname,
+            payload.os,
+            payload.platform
+        )
 
-        device_token = create_device_token(cur, device["id"])
+        # 2. Create token for the newly paired device
+        device_token = create_device_token(
+            cur,
+            device["id"]
+        )
 
-        return PairDeviceResponse(message="Pairing completed",device_id=device["id"],device_token=device_token)
+        # 3. Tell the user's mobile app that pairing succeeded
+        await manager.send_to_user(
+            str(device["user_id"]),
+            {
+                "type": "device_paired",
+                "device_id": str(device["id"]),
+                "hostname": device["hostname"],
+                "os": device["os"],
+                "platform": device["platform"],
+            }
+        )
+
+        # 4. Return response to the device that entered the code
+        return PairDeviceResponse(
+            message="Pairing completed",
+            device_id=device["id"],
+            device_token=device_token
+        )
 
     except HTTPException:
+        conn.rollback()
         raise
 
     except psycopg2.DatabaseError:
-        raise HTTPException(status_code=500,detail="Database error",)
+        conn.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Database error"
+        )
 
     finally:
         cur.close()

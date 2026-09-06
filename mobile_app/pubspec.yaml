@@ -36,9 +36,12 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_riverpod: ^2.6.1
   dio: ^5.7.0
+  http: ^1.6.0
   flutter_secure_storage: ^9.2.2
   web_socket_channel: ^3.0.1
   intl: ^0.20.1
+  provider: ^6.1.5
+  fl_chart: ^1.2.0
 
 dev_dependencies:
   flutter_test:

@@ -63,50 +63,74 @@ class SystemStatsService {
   }
 
   /// Connect to the live telemetry WebSocket stream with auto-reconnect
-  void connectWebSocket() {
-    if (_isDisposed) return;
+ void connectWebSocket() {
+  if (_isDisposed) return;
 
-    _reconnectTimer?.cancel();
-    _subscription?.cancel();
-    _channel?.sink.close();
+  _reconnectTimer?.cancel();
+  _subscription?.cancel();
+  _channel?.sink.close();
 
-    _setStatus(ConnectionStatus.connecting);
-    debugPrint('Connecting to WebSocket: $wsUrl');
+  _setStatus(ConnectionStatus.connecting);
+  debugPrint('Connecting to WebSocket: $wsUrl');
 
-    try {
-      final uri = Uri.parse(wsUrl);
-      _channel = WebSocketChannel.connect(uri);
+  try {
+    final uri = Uri.parse(wsUrl);
+    _channel = WebSocketChannel.connect(uri);
 
-      _subscription = _channel!.stream.listen(
-        (message) {
-          _setStatus(ConnectionStatus.connected);
-          try {
-            final decoded = json.decode(message.toString());
-            if (decoded is Map<String, dynamic>) {
-              final stats = LiveStats.fromJson(decoded);
-              if (!_statsController.isClosed) {
-                _statsController.add(stats);
-              }
-            }
-          } catch (e) {
-            debugPrint('Error parsing incoming stats JSON: $e');
-          }
-        },
-        onError: (error) {
-          debugPrint('WebSocket error: $error');
-          _handleDisconnect();
-        },
-        onDone: () {
-          debugPrint('WebSocket closed');
-          _handleDisconnect();
-        },
-        cancelOnError: true,
-      );
-    } catch (e) {
-      debugPrint('Error creating WebSocket channel: $e');
-      _handleDisconnect();
-    }
+    _subscription = _channel!.stream.listen(
+      (message) {
+        _setStatus(ConnectionStatus.connected);
+
+        try {
+          final decoded = json.decode(message.toString());
+
+if (decoded is! Map<String, dynamic>) {
+  debugPrint('Invalid WebSocket message format');
+  return;
+}
+
+if (decoded['type'] != 'telemetry') {
+  debugPrint('Ignoring message type: ${decoded['type']}');
+  return;
+}
+
+final data = decoded['data'];
+
+if (data is! Map<String, dynamic>) {
+  debugPrint('Telemetry message has no valid data');
+  return;
+}
+
+final stats = LiveStats.fromJson(data);
+
+debugPrint(
+  'Telemetry → CPU: ${stats.cpu.usage.toStringAsFixed(1)}%, '
+  'RAM: ${stats.memory.usage.toStringAsFixed(1)}%',
+);
+
+if (!_statsController.isClosed) {
+  _statsController.add(stats);
+}
+        } catch (e, stackTrace) {
+          debugPrint('Error parsing incoming stats JSON: $e');
+          debugPrint('$stackTrace');
+        }
+      },
+      onError: (error) {
+        debugPrint('WebSocket error: $error');
+        _handleDisconnect();
+      },
+      onDone: () {
+        debugPrint('WebSocket closed');
+        _handleDisconnect();
+      },
+      cancelOnError: true,
+    );
+  } catch (e) {
+    debugPrint('Error creating WebSocket channel: $e');
+    _handleDisconnect();
   }
+}
 
   void _handleDisconnect() {
     _setStatus(ConnectionStatus.disconnected);

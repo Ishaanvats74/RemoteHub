@@ -2,7 +2,7 @@ class ApiConstants {
   // Default base URL. In Android emulator: 10.0.2.2 points to host machine.
   // In iOS simulator or web or desktop: localhost or 127.0.0.1.
   // Can be configured by the user dynamically via the server settings dialog.
-  static const String defaultBaseUrl = 'http://10.0.2.2:8000';
+  static const String defaultBaseUrl = 'http://127.0.0.1:8000';
   
   // Timeout settings
   static const Duration connectTimeout = Duration(seconds: 10);

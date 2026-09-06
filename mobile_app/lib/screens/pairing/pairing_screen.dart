@@ -1,11 +1,12 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../core/constants/api_constants.dart';
-import '../../core/theme/app_colors.dart';
-import '../../core/utils/date_formatter.dart';
 import '../../state/devices_state.dart';
+import '../../state/websocket_state.dart';
 import '../../widgets/common/app_button.dart';
 
 class PairingScreen extends ConsumerStatefulWidget {
@@ -22,22 +23,66 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
   bool _isCopied = false;
 
   Timer? _countdownTimer;
-  int _secondsRemaining = ApiConstants.pairingCodeExpireMinutes * 60;
-  final int _totalSeconds = ApiConstants.pairingCodeExpireMinutes * 60;
+
+  int _secondsRemaining =
+      ApiConstants.pairingCodeExpireMinutes * 60;
+
+  final int _totalSeconds =
+      ApiConstants.pairingCodeExpireMinutes * 60;
+
+  late final ProviderSubscription _pairingSubscription;
 
   @override
   void initState() {
     super.initState();
+
+    // Listen for the backend notification that a desktop
+    // has successfully paired with this account.
+    _pairingSubscription = ref.listenManual(
+      wsDevicePairedStreamProvider,
+      (previous, next) {
+        next.whenData((message) {
+          if (!mounted) return;
+
+          // Stop the pairing-code countdown.
+          _countdownTimer?.cancel();
+
+          // Show success message.
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '${message.hostname} connected successfully!',
+              ),
+            ),
+          );
+
+          // Give the user a moment to see the message,
+          // then return to the previous screen.
+          Future.delayed(
+            const Duration(milliseconds: 800),
+            () {
+              if (mounted) {
+                Navigator.of(context).pop();
+              }
+            },
+          );
+        });
+      },
+    );
+
     _fetchPairingCode();
   }
 
   @override
   void dispose() {
     _countdownTimer?.cancel();
+    _pairingSubscription.close();
     super.dispose();
   }
 
   Future<void> _fetchPairingCode() async {
+    if (!mounted) return;
+
     setState(() {
       _isLoading = true;
       _error = null;
@@ -45,403 +90,287 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     });
 
     try {
-      final code = await ref.read(devicesNotifierProvider.notifier).generatePairingCode();
-      if (mounted) {
-        setState(() {
-          _code = code;
-          _isLoading = false;
-          _secondsRemaining = _totalSeconds;
-        });
-        _startCountdown();
-      }
+      final code = await ref
+          .read(devicesNotifierProvider.notifier)
+          .generatePairingCode();
+
+      if (!mounted) return;
+
+      setState(() {
+        _code = code;
+        _secondsRemaining = _totalSeconds;
+        _isLoading = false;
+      });
+
+      _startCountdown();
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _error = e.toString();
-        });
-      }
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+        _error = e.toString();
+      });
     }
   }
 
   void _startCountdown() {
     _countdownTimer?.cancel();
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_secondsRemaining > 0) {
+
+    _countdownTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+
+        if (_secondsRemaining <= 1) {
+          timer.cancel();
+
+          setState(() {
+            _secondsRemaining = 0;
+          });
+
+          return;
+        }
+
         setState(() {
           _secondsRemaining--;
         });
-      } else {
-        timer.cancel();
-      }
-    });
+      },
+    );
   }
 
-  void _copyToClipboard() {
+  Future<void> _copyCode() async {
     if (_code == null) return;
-    Clipboard.setData(ClipboardData(text: _code!));
+
+    await Clipboard.setData(
+      ClipboardData(text: _code!),
+    );
+
+    if (!mounted) return;
+
     setState(() {
       _isCopied = true;
     });
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: const [
-            Icon(Icons.check_circle_rounded, color: AppColors.statusOnline, size: 18),
-            SizedBox(width: 8),
-            Text('Pairing code copied to clipboard'),
-          ],
-        ),
-        duration: const Duration(seconds: 2),
+      const SnackBar(
+        content: Text('Pairing code copied'),
       ),
     );
 
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) {
-        setState(() {
-          _isCopied = false;
-        });
-      }
-    });
+    Future.delayed(
+      const Duration(seconds: 2),
+      () {
+        if (mounted) {
+          setState(() {
+            _isCopied = false;
+          });
+        }
+      },
+    );
+  }
+
+  String _formatCountdown() {
+    final minutes = _secondsRemaining ~/ 60;
+    final seconds = _secondsRemaining % 60;
+
+    return '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+  }
+
+  double _progressValue() {
+    if (_totalSeconds == 0) return 0;
+
+    return _secondsRemaining / _totalSeconds;
   }
 
   @override
   Widget build(BuildContext context) {
-    final isExpired = _secondsRemaining <= 0;
-    final progress = _secondsRemaining / _totalSeconds;
+    final theme = Theme.of(context);
 
     return Scaffold(
-      backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Pair Laptop / Desktop'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
+        title: const Text('Pair Device'),
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const SizedBox(height: 12),
-              // Instructions Card
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.surfaceBorder),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: const [
-                        Icon(
-                          Icons.laptop_chromebook_rounded,
-                          color: AppColors.primary,
-                          size: 22,
-                        ),
-                        SizedBox(width: 10),
-                        Text(
-                          'Desktop Setup Instructions',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    _buildInstructionStep(
-                      step: '1',
-                      text: 'Launch the RemoteCtrl companion app on your laptop or PC.',
-                    ),
-                    const SizedBox(height: 10),
-                    _buildInstructionStep(
-                      step: '2',
-                      text: 'Select "Pair with Account" and enter the 6-digit code below.',
-                    ),
-                    const SizedBox(height: 10),
-                    _buildInstructionStep(
-                      step: '3',
-                      text: 'Once connected, your laptop will appear on your device dashboard.',
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 32),
-
-              // Code Display Card
-              if (_isLoading) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 48),
-                  child: Column(
-                    children: const [
-                      SizedBox(
-                        width: 32,
-                        height: 32,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 3,
-                          valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-                        ),
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        'Generating secure pairing code...',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ] else if (_error != null) ...[
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: AppColors.actionShutdownBg,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.actionShutdown.withValues(alpha: 0.3)),
-                  ),
-                  child: Column(
-                    children: [
-                      const Icon(
-                        Icons.error_outline_rounded,
-                        color: AppColors.actionShutdown,
-                        size: 32,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _error!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      AppButton(
-                        text: 'Retry Generation',
-                        variant: AppButtonVariant.primary,
-                        height: 44,
-                        width: 180,
-                        onPressed: _fetchPairingCode,
-                      ),
-                    ],
-                  ),
-                ),
-              ] else if (_code != null) ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(24),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: isExpired
-                          ? AppColors.actionShutdown.withValues(alpha: 0.5)
-                          : AppColors.primary.withValues(alpha: 0.3),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: (isExpired ? AppColors.actionShutdown : AppColors.primary)
-                            .withValues(alpha: 0.08),
-                        blurRadius: 20,
-                        spreadRadius: 2,
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        isExpired ? 'PAIRING CODE EXPIRED' : 'YOUR 6-DIGIT PAIRING CODE',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 1.2,
-                          color: isExpired
-                              ? AppColors.actionShutdown
-                              : AppColors.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      // 6-digit display
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: _buildDigitBoxes(_code!, isExpired),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-
-                      // Countdown timer bar
-                      Column(
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                isExpired ? 'Expired' : 'Expires in',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  color: AppColors.textSecondary,
-                                ),
-                              ),
-                              Text(
-                                DateFormatter.formatCountdown(_secondsRemaining),
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                  color: isExpired
-                                      ? AppColors.actionShutdown
-                                      : _secondsRemaining < 60
-                                          ? AppColors.statusConnecting
-                                          : AppColors.textPrimary,
-                                  fontFamily: 'monospace',
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
-                            child: LinearProgressIndicator(
-                              value: progress.clamp(0.0, 1.0),
-                              minHeight: 6,
-                              backgroundColor: AppColors.surfaceBorder,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                isExpired
-                                    ? AppColors.actionShutdown
-                                    : _secondsRemaining < 60
-                                        ? AppColors.statusConnecting
-                                        : AppColors.primary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-
-                      // Action Buttons (Copy / Refresh)
-                      Row(
-                        children: [
-                          Expanded(
-                            child: AppButton(
-                              text: _isCopied ? 'Copied' : 'Copy Code',
-                              icon: _isCopied
-                                  ? Icons.check_circle_rounded
-                                  : Icons.copy_rounded,
-                              variant: isExpired
-                                  ? AppButtonVariant.outlined
-                                  : AppButtonVariant.secondary,
-                              onPressed: isExpired ? null : _copyToClipboard,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: AppButton(
-                              text: 'New Code',
-                              icon: Icons.refresh_rounded,
-                              variant: isExpired
-                                  ? AppButtonVariant.primary
-                                  : AppButtonVariant.outlined,
-                              onPressed: _fetchPairingCode,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
-          ),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(),
+                )
+              : _error != null
+                  ? _buildErrorState()
+                  : _buildPairingContent(theme),
         ),
       ),
     );
   }
 
-  List<Widget> _buildDigitBoxes(String code, bool isExpired) {
-    final digits = code.replaceAll(' ', '').split('');
-    final widgets = <Widget>[];
-
-    for (int i = 0; i < digits.length; i++) {
-      widgets.add(
-        Container(
-          width: 44,
-          height: 58,
-          margin: const EdgeInsets.symmetric(horizontal: 4),
-          decoration: BoxDecoration(
-            color: AppColors.background,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: isExpired
-                  ? AppColors.actionShutdown.withValues(alpha: 0.4)
-                  : AppColors.primary.withValues(alpha: 0.4),
-              width: 1.5,
-            ),
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.error_outline,
+            size: 56,
           ),
-          child: Center(
-            child: Text(
-              digits[i],
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                color: isExpired ? AppColors.textMuted : AppColors.textPrimary,
-                fontFamily: 'monospace',
-              ),
-            ),
+          const SizedBox(height: 16),
+          Text(
+            _error ?? 'Something went wrong',
+            textAlign: TextAlign.center,
           ),
-        ),
-      );
-    }
-
-    return widgets;
+          const SizedBox(height: 24),
+          AppButton(
+            text: 'Try Again',
+            onPressed: _fetchPairingCode,
+          ),
+        ],
+      ),
+    );
   }
 
-  Widget _buildInstructionStep({required String step, required String text}) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 22,
-          height: 22,
-          decoration: BoxDecoration(
-            color: AppColors.primary.withValues(alpha: 0.15),
-            shape: BoxShape.circle,
-            border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+  Widget _buildPairingContent(ThemeData theme) {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 32),
+
+          const Icon(
+            Icons.devices,
+            size: 72,
           ),
-          child: Center(
-            child: Text(
-              step,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: AppColors.primary,
+
+          const SizedBox(height: 24),
+
+          Text(
+            'Pair Your Device',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          Text(
+            'Enter this 6-digit code on the desktop device '
+            'you want to pair with your account.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium,
+          ),
+
+          const SizedBox(height: 40),
+
+          if (_code != null)
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 28,
+              ),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: theme.dividerColor,
+                ),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    'PAIRING CODE',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      letterSpacing: 1.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  SelectableText(
+                    _code!,
+                    style: theme.textTheme.displaySmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 8,
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    height: 44,
+                    child: AppButton(
+                      text: _isCopied ? 'Copied' : 'Copy Code',
+                      onPressed: _copyCode,
+                    ),
+                  ),
+                ],
               ),
             ),
+
+          const SizedBox(height: 32),
+
+          Text(
+            'Code expires in',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium,
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            text,
-            style: const TextStyle(
-              fontSize: 13,
-              color: AppColors.textSecondary,
-              height: 1.4,
+
+          const SizedBox(height: 8),
+
+          Text(
+            _formatCountdown(),
+            textAlign: TextAlign.center,
+            style: theme.textTheme.headlineMedium?.copyWith(
+              fontWeight: FontWeight.bold,
             ),
           ),
-        ),
-      ],
+
+          const SizedBox(height: 16),
+
+          LinearProgressIndicator(
+            value: _progressValue(),
+          ),
+
+          const SizedBox(height: 40),
+
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              color: theme.colorScheme.surfaceContainerHighest,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Open RemoteHub on your desktop and enter '
+                    'the code shown above. Once the device pairs, '
+                    'this screen will automatically close.',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          TextButton(
+            onPressed: _fetchPairingCode,
+            child: const Text('Generate New Code'),
+          ),
+        ],
+      ),
     );
   }
 }

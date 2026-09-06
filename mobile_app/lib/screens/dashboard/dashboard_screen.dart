@@ -14,6 +14,7 @@ import '../auth/login_screen.dart';
 import '../device_detail/device_detail_screen.dart';
 import '../pairing/pairing_screen.dart';
 
+
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
