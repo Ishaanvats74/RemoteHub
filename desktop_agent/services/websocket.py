@@ -3,11 +3,14 @@ from .heartbeat import heartbeat
 import websockets
 import asyncio
 import json
+import logging
 from commands.executor import cmd_execute
-import traceback
+
+logger = logging.getLogger(__name__)
 
 URL = "ws://127.0.0.1:8000/ws/desktop"
-MAX_DELAY = 30  
+MAX_DELAY = 30
+
 
 async def send_telemetry(ws):
     try:
@@ -26,18 +29,16 @@ async def send_telemetry(ws):
 
             await asyncio.sleep(1)
 
-    except Exception as e:
-        print("TELEMETRY ERROR:", repr(e))
+    except Exception:
+        logger.exception("Telemetry task failed")
         raise
+
 
 async def receive_commands(ws):
     try:
         while True:
-            print("Waiting for server message...")
-
             message = json.loads(await ws.recv())
-
-            print("Received from server:", message)
+            logger.debug("Received from server: %s", message)
 
             if message.get("type") == "command":
                 command = message["command"]
@@ -48,27 +49,36 @@ async def receive_commands(ws):
                     "type": "command_result",
                     "device_id": message["device_id"],
                     "command": command,
+                    "result": result,
                 }))
 
-    except Exception as e:
-        print("RECEIVE ERROR:", repr(e))
+    except Exception:
+        logger.exception("Command receive task failed")
         raise
-            
-async def ws_client(token):
+
+
+async def ws_client(token, on_invalid_token=None, on_error=None):
+    """
+    Connects to the desktop websocket and keeps it alive with reconnect/backoff.
+
+    on_invalid_token: called (awaited) when the server rejects the token
+                       (close code 1008). Reconnect loop stops after this.
+    on_error:         called (awaited) with a human-readable message on
+                       recoverable errors (network issues, unexpected
+                       exceptions), so the UI can surface it if it wants to.
+                       The loop keeps retrying after this.
+    """
     delay = 1
 
     while True:
         try:
-            print("Connecting to server...")
+            logger.info("Connecting to server...")
 
             async with websockets.connect(URL) as ws:
-                print("Connected!")
+                logger.info("Connected")
                 delay = 1
 
-                # Authenticate
-                await ws.send(json.dumps({
-                    "token": token
-                }))
+                await ws.send(json.dumps({"token": token}))
 
                 tasks = [
                     asyncio.create_task(send_telemetry(ws)),
@@ -83,33 +93,37 @@ async def ws_client(token):
 
                 for task in done:
                     exception = task.exception()
-
                     if exception:
-                        print(
-                            f"WebSocket task failed: "
-                            f"{type(exception).__name__}: {exception}"
+                        logger.error(
+                            "WebSocket task failed: %s: %s",
+                            type(exception).__name__,
+                            exception,
                         )
 
                 for task in pending:
                     task.cancel()
 
-                await asyncio.gather(
-                    *pending,
-                    return_exceptions=True
-                )
+                await asyncio.gather(*pending, return_exceptions=True)
 
         except websockets.ConnectionClosed as e:
-            print(
-                f"Connection closed: "
-                f"code={e.code}, reason={e.reason}"
-            )
+            logger.warning("Connection closed: code=%s, reason=%s", e.code, e.reason)
+
+            if e.code == 1008:
+                logger.warning("Device token rejected by server (invalid/revoked).")
+                if on_invalid_token:
+                    await on_invalid_token()
+                return  # stop retrying — this token is dead
 
         except (OSError, asyncio.TimeoutError) as e:
-            print(f"Connection error: {e}")
+            logger.warning("Connection error: %s", e)
+            if on_error:
+                await on_error(f"Connection error: {e}")
 
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            logger.exception("Unexpected error in ws_client")
+            if on_error:
+                await on_error(f"Unexpected error: {e}")
 
-        print(f"Reconnecting in {delay} second(s)...")
+        logger.info("Reconnecting in %s second(s)...", delay)
         await asyncio.sleep(delay)
         delay = min(delay * 2, MAX_DELAY)

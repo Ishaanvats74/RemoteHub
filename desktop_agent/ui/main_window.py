@@ -24,9 +24,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(self.stylesheet_path.read_text())
 
     def show_pair_page(self):
-        print("Switching to pair page")
         self.stack.setCurrentWidget(self.pair_page)
 
     def show_connected_page(self):
-        print("Switching to connected page")
         self.stack.setCurrentWidget(self.connected_page)

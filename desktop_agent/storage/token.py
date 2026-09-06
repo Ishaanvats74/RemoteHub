@@ -8,7 +8,6 @@ TOKEN_FILE = get_app_data_dir() / "token.json"
 
 def load_token():
     try:
-        print(TOKEN_FILE)
         with open(TOKEN_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
@@ -18,7 +17,6 @@ def load_token():
 def save_token(data):
     with open(TOKEN_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
-    print(TOKEN_FILE)
 
 def delete_token():
     if TOKEN_FILE.exists():

@@ -24,6 +24,7 @@ import jwt
 import os
 from uuid import UUID
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Header
 
 load_dotenv()
 
@@ -101,6 +102,7 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
+    # allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
@@ -553,54 +555,24 @@ def get_device_telemetry(device_id: UUID,current_user=Depends(get_current_user))
         conn.close()
 
 
- 
+@app.get("/devices/validate")
+@limiter.limit("20/minute")
+async def validate_device_token(request: Request, authorization: str | None = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing device token")
 
+    token = authorization.split(" ", 1)[1]
+    device = authenticate_device(token)
 
+    if device is None:
+        raise HTTPException(status_code=401, detail="Invalid or revoked device token")
 
-# ==================== SYSTEM MONITORING STATS ====================
-try:
-    import sys
-    from pathlib import Path
-    _agent_dir = str(Path(__file__).resolve().parent.parent / "desktop_agent")
-    if _agent_dir not in sys.path:
-        sys.path.append(_agent_dir)
-    from services.telemetry import get_hardware_specs, get_live_stats
-except Exception as _e:
-    print(f"Warning: Failed to import telemetry from desktop_agent: {_e}")
-    def get_hardware_specs():
-        return {
-            "os": "Windows",
-            "os_version": "11",
-            "cpu": {"brand": "Generic CPU", "cores": 4, "threads": 8, "frequency_ghz": 2.4},
-            "ram": {"total_gb": 16.0, "type": "DDR4", "speed": "3200 MHz"},
-            "gpu": {"gpus": []},
-        }
-    def get_live_stats():
-        return {
-            "cpu": {"usage": 15.0, "temperature": None},
-            "memory": {"usage": 45.0, "used_gb": 7.2, "total_gb": 16.0},
-            "disk": {"usage": 60.0, "used_gb": 120.0, "total_gb": 200.0},
-            "gpu": None,
-            "temperatures": {},
-            "fans": {},
-            "battery": None,
-        }
+    if device.get("status") == "revoked":
+        raise HTTPException(status_code=401, detail="Device has been revoked")
 
-@app.get("/stats/hardware")
-def get_hardware_endpoint():
-    """Returns static hardware specifications"""
-    return get_hardware_specs()
-
-@app.websocket("/ws/stats")
-async def websocket_system_stats(websocket: WebSocket):
-    """Pushes real-time live system stats every 1 second to connected clients"""
-    await websocket.accept()
-    try:
-        while True:
-            stats = await asyncio.to_thread(get_live_stats)
-            await websocket.send_json(stats)
-            await asyncio.sleep(1)
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        print(f"WebSocket stats error: {e}")
+    return {
+        "valid": True,
+        "device_id": str(device["id"]),
+        "hostname": device["hostname"],
+    }
+  

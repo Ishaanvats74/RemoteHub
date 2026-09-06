@@ -1,10 +1,14 @@
 import json
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 async def heartbeat(ws):
     try:
         while True:
-            print("Sending heartbeat...")
+            logger.debug("Sending heartbeat...")
 
             await ws.send(json.dumps({
                 "type": "heartbeat",
@@ -12,6 +16,6 @@ async def heartbeat(ws):
 
             await asyncio.sleep(30)
 
-    except Exception as e:
-        print("HEARTBEAT ERROR:", repr(e))
+    except Exception:
+        logger.exception("Heartbeat task failed")
         raise
