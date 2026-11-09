@@ -103,11 +103,14 @@ class WsTelemetryMessage extends WsIncomingMessage {
   });
 
   factory WsTelemetryMessage.fromJson(Map<String, dynamic> json) {
-    final rawData = json['data'] is Map<String, dynamic>
-        ? json['data'] as Map<String, dynamic>
-        : json['telemetry'] is Map<String, dynamic>
-            ? json['telemetry'] as Map<String, dynamic>
-            : json;
+    Map<String, dynamic> rawData;
+    if (json['data'] is Map) {
+      rawData = Map<String, dynamic>.from(json['data'] as Map);
+    } else if (json['telemetry'] is Map) {
+      rawData = Map<String, dynamic>.from(json['telemetry'] as Map);
+    } else {
+      rawData = json;
+    }
 
     return WsTelemetryMessage(
       deviceId: (json['device_id'] ?? '').toString(),

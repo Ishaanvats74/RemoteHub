@@ -109,6 +109,43 @@ void main() {
       expect(telemetry.uptime, '3 days, 4 hours');
     });
 
+    test('Desktop agent nested telemetry parsing', () {
+      final telemetry = TelemetryModel.fromJson({
+        'cpu': {'usage': 13.9, 'temperature': null},
+        'memory': {'usage': 61.1, 'used_gb': 10.31, 'total_gb': 16.87},
+        'disk': {'usage': 90.8, 'used_gb': 213.98, 'total_gb': 235.55},
+        'gpu': {
+          'name': 'NVIDIA GeForce RTX 4060 Laptop GPU',
+          'usage': 0.0,
+          'temperature': 56.0,
+          'memory_used_mb': 0.0,
+          'memory_total_mb': 8188.0,
+        },
+        'temperatures': {},
+        'fans': {},
+        'battery': {
+          'percent': 75,
+          'plugged_in': true,
+          'status': 'Charging',
+          'time_remaining': 'Charging',
+        },
+      });
+
+      expect(telemetry.cpuPercent, 13.9);
+      expect(telemetry.memoryPercent, 61.1);
+      expect(telemetry.memoryUsedGb, 10.31);
+      expect(telemetry.memoryTotalGb, 16.87);
+      expect(telemetry.diskPercent, 90.8);
+      expect(telemetry.diskUsedGb, 213.98);
+      expect(telemetry.diskTotalGb, 235.55);
+      expect(telemetry.gpuName, 'NVIDIA GeForce RTX 4060 Laptop GPU');
+      expect(telemetry.gpuPercent, 0.0);
+      expect(telemetry.gpuTemp, 56.0);
+      expect(telemetry.gpuMemoryTotalMb, 8188.0);
+      expect(telemetry.batteryPercent, 75.0);
+      expect(telemetry.batteryPluggedIn, true);
+    });
+
     test('WsIncomingMessage parsing', () {
       final cmdResult = WsIncomingMessage.fromJson({
         'type': 'command_result',

@@ -1,13 +1,14 @@
-from database.devices import get_device_by_token_hash
+from database.devices import DEVICE_TOKEN_PREFIX, get_device_by_token_hash
 from auth.dependencies import decode_token
 from datetime import datetime, timedelta, timezone
 from database.connection import get_db_connection
 from psycopg.rows import dict_row
 from fastapi import HTTPException, status
 from database.utils import hash_token
-from psycopg2 import DatabaseError
+from psycopg import DatabaseError
 from pwdlib import PasswordHash
 from dotenv import load_dotenv
+from uuid import uuid4
 from typing import TypedDict   
 import jwt
 import os
@@ -45,17 +46,18 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> T
 
 
 def create_refresh_token(data: dict,expires_delta: timedelta | None = None) -> TokenData:
-    to_encode = data.copy()
+    to_encode = {**data, "jti": str(uuid4())}
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(days=15))
     to_encode["exp"] = expire
     encoded_jwt = jwt.encode(to_encode,SECRET_KEY,algorithm=ALGORITHM)
     return {"encoded_jwt": encoded_jwt,"expire": expire}
 
 def authenticate_device(token: str):
-    try:
-        decode_token(token, "device")
-    except HTTPException:
-        return None
+    if not token.startswith(DEVICE_TOKEN_PREFIX):
+        try:
+            decode_token(token, "device")
+        except HTTPException:
+            return None
     token_hash = hash_token(token)
     conn = get_db_connection()
     cur = conn.cursor(row_factory=dict_row)
@@ -70,7 +72,12 @@ def authenticate_device(token: str):
         cur.close()
         conn.close()
 
-    if device is None:
+    if (
+        device is None
+        or device["status"] == "revoked"
+        or device["token_expires_at"] is None
+        or device["token_expires_at"] <= datetime.now(timezone.utc)
+    ):
         return None
 
     return device

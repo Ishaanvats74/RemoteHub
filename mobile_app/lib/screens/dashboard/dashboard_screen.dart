@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../api/websocket_manager.dart';
@@ -13,6 +15,7 @@ import '../../widgets/device_card.dart';
 import '../auth/login_screen.dart';
 import '../device_detail/device_detail_screen.dart';
 import '../pairing/pairing_screen.dart';
+import '../settings/settings_screen.dart';
 
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -27,7 +30,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(devicesNotifierProvider.notifier).loadDevices();
+      if (mounted) ref.read(devicesNotifierProvider.notifier).loadDevices();
     });
   }
 
@@ -37,7 +40,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Log Out'),
         content: const Text(
-          'Are you sure you want to log out of RemoteCtrl? All active WebSocket links will be closed.',
+          'Are you sure you want to log out of RemoteHub? All active WebSocket links will be closed.',
         ),
         actions: [
           TextButton(
@@ -75,11 +78,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     );
   }
 
-  void _openPairingScreen() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const PairingScreen(),
-      ),
+  Future<void> _openPairingScreen() async {
+    final paired = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const PairingScreen()),
+    );
+    if (!mounted || paired != true) return;
+    unawaited(ref.read(webSocketManagerProvider).connect());
+    await ref.read(devicesNotifierProvider.notifier).loadDevices();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Laptop paired.')),
     );
   }
 
@@ -130,7 +138,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             ),
             const SizedBox(width: 12),
             const Text(
-              'RemoteCtrl',
+              'RemoteHub',
               style: TextStyle(
                 fontWeight: FontWeight.w800,
                 letterSpacing: -0.5,
@@ -176,6 +184,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             tooltip: 'Pair New Device',
             icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.primary),
             onPressed: _openPairingScreen,
+          ),
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined, color: AppColors.textSecondary),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
           ),
           IconButton(
             tooltip: 'Log Out',

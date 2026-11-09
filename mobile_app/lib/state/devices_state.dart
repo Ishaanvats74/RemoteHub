@@ -60,7 +60,7 @@ class DevicesNotifier extends StateNotifier<DevicesState> {
     if (state.devices.isEmpty) return;
 
     final updated = state.devices.map((device) {
-      if (device.id == deviceId) {
+      if (device.id == deviceId || (deviceId.isEmpty && state.devices.length == 1)) {
         return device.copyWith(
           status: status,
           lastSeen: DateTime.now(),
@@ -72,8 +72,11 @@ class DevicesNotifier extends StateNotifier<DevicesState> {
     state = state.copyWith(devices: updated);
   }
 
-  Future<void> loadDevices() async {
-    state = state.copyWith(isLoading: true, errorMessage: null);
+  Future<void> loadDevices({bool forceRefresh = false}) async {
+    // Cache-first: only show full-screen skeleton if cache is empty
+    if (state.devices.isEmpty || forceRefresh) {
+      state = state.copyWith(isLoading: true, errorMessage: null);
+    }
 
     try {
       final devices = await _devicesApi.getDevices();

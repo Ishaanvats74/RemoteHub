@@ -8,7 +8,7 @@ def delete_active_pairing_codes(cur , user_id):
     cur.execute("DELETE FROM pairing_codes WHERE user_id = %s;",(user_id,))
 
 def pair_device(cur, code, hostname, os_name, platform):
-    cur.execute("SELECT * FROM pairing_codes WHERE code = %s",(code,))
+    cur.execute("SELECT * FROM pairing_codes WHERE code = %s FOR UPDATE",(code,))
     pairing_row = cur.fetchone()
 
     if pairing_row is None:

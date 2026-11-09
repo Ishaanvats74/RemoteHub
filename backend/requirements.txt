@@ -1,4 +1,4 @@
-fastapi[standard]
+fastapi[standard]>=0.121.0
 pyjwt
 pwdlib[argon2]
 slowapi
@@ -6,3 +6,4 @@ psycopg[binary]
 psycopg2-binary 
 asyncpg 
 python-dotenv
+redis

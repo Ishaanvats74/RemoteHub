@@ -1,4 +1,9 @@
 import asyncio
+import logging
+from contextlib import asynccontextmanager
+from starlette.concurrency import run_in_threadpool
+from cache.redis_client import redis_cache
+from pairing import pairing_router
 from database.refresh_tokens import insert_refresh_token,get_refresh_token_record,revoke_refresh_token,revoke_all_refresh_tokens_for_user
 from database.devices import create_device_token, update_last_seen, set_device_status, get_device, get_devices
 from auth.security import authenticate_user,create_access_token,create_refresh_token,get_password_hash,authenticate_device
@@ -18,11 +23,12 @@ from psycopg.rows import dict_row
 from pydantic import BaseModel, EmailStr,Field
 from dotenv import load_dotenv
 from typing import Annotated
-import psycopg2
+import psycopg
 import secrets
 import jwt
 import os
 from uuid import UUID
+from redis.exceptions import RedisError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Header
 
@@ -87,31 +93,60 @@ def user_rate_limit(request: Request):
 
     return get_remote_address(request)
 
-limiter = Limiter(key_func=user_rate_limit)
-app = FastAPI()
+logger = logging.getLogger(__name__)
+limiter = Limiter(key_func=user_rate_limit, storage_uri=os.getenv("REDIS_URL") or None)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    redis_cache.start()
+    try:
+        yield
+    finally:
+        await redis_cache.close()
+
+
+app = FastAPI(lifespan=lifespan)
 manager = ConnectionManager()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-origins = [
-    "http://localhost.tiangolo.com",
-    "https://localhost.tiangolo.com",
-    "http://localhost",
-    "http://localhost:8080",
-    "http://localhost:60566/"
-]
+app.include_router(pairing_router(limiter))
 
+cors_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    # allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+def check_database():
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT 1
+            FROM users, devices, refresh_tokens, pairing_codes, desktop_pairing_sessions
+            WHERE false
+        """)
+
+
+@app.get("/ready")
+async def readiness():
+    try:
+        await run_in_threadpool(check_database)
+        if redis_cache.client is not None:
+            await redis_cache.client.ping()
+    except (psycopg.Error, RedisError):
+        raise HTTPException(503, "Backend dependencies unavailable")
+    return {"status": "ready"}
 
 
 @app.get("/users/me/")
@@ -146,7 +181,7 @@ async def login_for_access_token(request: Request, form_data: Annotated[OAuth2Pa
         conn.rollback()
         raise
 
-    except psycopg2.DatabaseError:
+    except psycopg.DatabaseError:
         conn.rollback()
         raise HTTPException(
             status_code=500,
@@ -162,8 +197,10 @@ async def login_for_access_token(request: Request, form_data: Annotated[OAuth2Pa
 @app.post("/auth/register", status_code=status.HTTP_201_CREATED, response_model=MessageResponse)
 @limiter.limit("2/minute")
 async def sign_up(request: Request, payload: SignUpRequest):
+    print("connection started")
     conn = get_db_connection()
     cur = conn.cursor(row_factory=dict_row)
+    print("connection successful")
 
     try:
         if user_exists(cur, payload.email):
@@ -176,7 +213,7 @@ async def sign_up(request: Request, payload: SignUpRequest):
     except HTTPException:
         raise
 
-    except psycopg2.DatabaseError:
+    except psycopg.DatabaseError:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Database error")
 
     finally:
@@ -204,7 +241,7 @@ async def refresh_access_token(request: Request, payload: RefreshRequest) -> Acc
     try:
         token_record = get_refresh_token_record(cur, payload.refresh_token)
         user = get_user_by_id(cur, user_id)
-    except psycopg2.DatabaseError:
+    except psycopg.DatabaseError:
         raise HTTPException(status_code=500,detail="Database error")
     
     finally:
@@ -258,7 +295,7 @@ async def logout(request: Request, payload: RefreshRequest):
     except HTTPException:
         raise
 
-    except psycopg2.DatabaseError:
+    except psycopg.DatabaseError:
         raise HTTPException(status_code=500,detail="Database error")
 
     finally:
@@ -278,7 +315,7 @@ async def pairing_code(request: Request, current_user: Annotated[User, Depends(g
         return PairingCodeResponse(code=code)
     except HTTPException:
         raise
-    except psycopg2.DatabaseError:
+    except psycopg.DatabaseError:
         raise HTTPException(status_code=500,detail="Database error")
     finally:
         cur.close()
@@ -295,20 +332,12 @@ async def pair(request: Request, payload: DevicePairRequest):
     cur = conn.cursor(row_factory=dict_row)
 
     try:
-        # 1. Verify pairing code and create/register the device
-        device = pair_device(
-            cur,
-            payload.code,
-            payload.hostname,
-            payload.os,
-            payload.platform
-        )
-
-        # 2. Create token for the newly paired device
-        device_token = create_device_token(
-            cur,
-            device["id"]
-        )
+        with conn.transaction():
+            device = pair_device(
+                cur, payload.code, payload.hostname or "Desktop",
+                payload.os or "Unknown", payload.platform or "Unknown",
+            )
+            device_token = create_device_token(cur, device["id"])
 
         # 3. Tell the user's mobile app that pairing succeeded
         await manager.send_to_user(
@@ -333,7 +362,7 @@ async def pair(request: Request, payload: DevicePairRequest):
         conn.rollback()
         raise
 
-    except psycopg2.DatabaseError:
+    except psycopg.DatabaseError:
         conn.rollback()
         raise HTTPException(
             status_code=500,
@@ -345,107 +374,68 @@ async def pair(request: Request, payload: DevicePairRequest):
         conn.close()
 
 
+async def receive_object(websocket):
+    message = await websocket.receive_json()
+    if not isinstance(message, dict):
+        raise ValueError("WebSocket message must be a JSON object")
+    return message
+
+
+def update_presence(device_id, online):
+    with get_db_connection() as conn, conn.cursor() as cur:
+        if online:
+            update_last_seen(cur, device_id)
+        else:
+            set_device_status(cur, device_id, "offline")
+
+
 @app.websocket("/ws/desktop")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    device = None
-
+    user_id = device_id = None
     try:
-        auth_message = await websocket.receive_json()
-        token = auth_message.get("token")
-
-        if token is None:
+        auth = await asyncio.wait_for(receive_object(websocket), timeout=10)
+        token = auth.get("token")
+        device = await run_in_threadpool(authenticate_device, token) if isinstance(token, str) else None
+        if device is None or device["status"] == "revoked":
             await websocket.close(code=1008)
             return
 
-        device = authenticate_device(token)
-        if device is None:
-            await websocket.close(code=1008)
-            return
-
-        print(f"Desktop connected: {device['hostname']}")
-
-        await manager.connect_desktop(user_id=str(device["user_id"]), device_id=str(device["id"]), websocket=websocket)
-        conn = get_db_connection()
-        cur = conn.cursor(row_factory=dict_row)
-
-        try:
-            set_device_status(cur, device["id"],'active')
-        except psycopg2.DatabaseError:
-            print("Failed to mark device online.")
-            await websocket.close(code=1011)
-            return
-        finally:
-            cur.close()
-            conn.close()
+        user_id, device_id = str(device["user_id"]), str(device["id"])
+        await manager.connect_desktop(user_id, device_id, websocket)
+        await run_in_threadpool(update_presence, device_id, True)
+        await websocket.send_json({"type": "authenticated"})
+        await manager.send_to_user(user_id, {
+            "type": "device_status", "device_id": device_id, "status": "online",
+        })
 
         while True:
-            message = await websocket.receive_json()
-
-            print("================================")
-            print("Desktop sent:", message)
-            print("================================")
-
-            message_type = message.get("type")
-
-            if message_type is None:
-                print("WARNING: Desktop message has no type!")
-                continue
-
-            match message_type:
-                case "hardware_specs":
-                    await manager.send_to_user(
-                        str(device["user_id"]),
-                        message
-                    )
-
+            message = await receive_object(websocket)
+            message["device_id"] = device_id
+            match message.get("type"):
+                case "hardware_specs" | "command_result":
+                    await manager.send_to_user(user_id, message)
                 case "telemetry":
-                    manager.update_telemetry(str(device["id"]),message.get("data", {}))
-
-                    await manager.send_to_user(str(device["user_id"]),message)
-
-                case "command_result":
-                    await manager.send_to_user(str(device["user_id"]),message)
-
+                    await manager.update_telemetry(device_id, message.get("data", {}))
+                    await manager.send_to_user(user_id, message)
                 case "heartbeat":
-                    conn = get_db_connection()
-                    cur = conn.cursor(row_factory=dict_row)
-
-                    try:
-                        update_last_seen(cur, device["id"])
-                    except psycopg2.DatabaseError:
-                        print("Failed to update heartbeat.")
-                        await websocket.close(code=1011)
-                        return
-                    finally:
-                        cur.close()
-                        conn.close()
-
-                case _:
-                    print(f"Unknown websocket message: {message_type}")
+                    await run_in_threadpool(update_presence, device_id, True)
 
     except WebSocketDisconnect:
-        print("Desktop disconnected.")
-
-    except Exception as e:
-        print(f"WebSocket error: {e}")
-
+        pass
+    except (ValueError, TimeoutError):
+        await websocket.close(code=1008)
+    except Exception:
+        logger.exception("Desktop WebSocket failed")
+        await websocket.close(code=1011)
     finally:
-        if device:
-            manager.disconnect_desktop(str(device["user_id"]),str(device["id"]))
+        if device_id and manager.disconnect_desktop(user_id, device_id, websocket):
+            await run_in_threadpool(update_presence, device_id, False)
+            if not manager.is_device_online(device_id):
+                await manager.send_to_user(user_id, {
+                    "type": "device_status", "device_id": device_id, "status": "offline",
+                })
 
-            conn = get_db_connection()
-            cur = conn.cursor(row_factory=dict_row)
-
-            try:
-                set_device_status(cur, device["id"],'offline')
-            except psycopg2.DatabaseError:
-                print("Failed to mark device offline.")
-            finally:
-                cur.close()
-                conn.close()
-
-            print(f"{device['hostname']} disconnected")
 
 def authenticate_user_token(token: str):
     credentials_exception = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Could not validate credentials",)
@@ -469,7 +459,7 @@ def authenticate_user_token(token: str):
     try:
         user = get_user_by_id(cur, user_id)
 
-    except psycopg2.DatabaseError:
+    except psycopg.DatabaseError:
         raise HTTPException(status_code=500,detail="Database error")
 
     finally:
@@ -484,46 +474,39 @@ def authenticate_user_token(token: str):
 @app.websocket("/ws/mobile")
 async def mobile_ws(websocket: WebSocket):
     await websocket.accept()
-    user = None
+    user_id = None
     try:
-        auth = await websocket.receive_json()
-        print(auth)
+        auth = await asyncio.wait_for(receive_object(websocket), timeout=10)
         token = auth.get("token")
-        print("Token:", token)
-        if token is None:
+        if not isinstance(token, str):
             await websocket.close(code=1008)
             return
-
-        user = authenticate_user_token(token)
-        print("Authenticated user:", user)
-        if user is None:
-            print("Authentication failed:")
-            await websocket.close(code=1008)
-            return
-
-        print(f"Mobile connected: {user['id']}")
-
-        await manager.connect_mobile(str(user["id"]),websocket)
+        user = await run_in_threadpool(authenticate_user_token, token)
+        user_id = str(user["id"])
+        await manager.connect_mobile(user_id, websocket)
+        await websocket.send_json({"type": "authenticated"})
 
         while True:
-            message = await websocket.receive_json()
-
-            message_type = message.get("type")
-
-            match message_type:
-
-                case "command":
-                    await manager.send_to_device(message["device_id"],message)
-
-                case _:
-                    print(f"Unknown message: {message_type}")
+            message = await receive_object(websocket)
+            device_id = message.get("device_id")
+            command = message.get("command")
+            if (
+                message.get("type") == "command"
+                and command in ("shutdown", "restart", "sleep", "lock")
+                and isinstance(device_id, str)
+                and device_id in manager.user_devices.get(user_id, ())
+            ):
+                await manager.send_to_device(device_id, {
+                    "type": "command", "device_id": device_id, "command": command,
+                })
 
     except WebSocketDisconnect:
-        print("Mobile disconnected")
-
+        pass
+    except (ValueError, TimeoutError, HTTPException):
+        await websocket.close(code=1008)
     finally:
-        if user:
-            manager.disconnect_mobile(str(user["id"]),websocket)
+        if user_id:
+            manager.disconnect_mobile(user_id, websocket)
 
 
 @app.get("/devices", response_model=list[DeviceResponse])
@@ -538,52 +521,7 @@ def get_all_devices(current_user=Depends(get_current_user)):
     except HTTPException:
         raise
 
-    except psycopg2.DatabaseError:
-        raise HTTPException(status_code=500,detail="Database error")
-
-    finally:
-        cur.close()
-        conn.close()
-
-
-@app.get("/devices/{device_id}")
-def get_single_device(device_id: str,current_user=Depends(get_current_user)):
-    conn = get_db_connection()
-    cur = conn.cursor(row_factory=dict_row)
-
-    try:
-        device = get_device(cur,device_id,current_user["id"])
-        return device
-
-    except HTTPException:
-        raise
-
-    except psycopg2.DatabaseError:
-        raise HTTPException(status_code=500,detail="Database error")
-
-    finally:
-        cur.close()
-        conn.close()
-
-
-
-
-@app.get("/devices/{device_id}/telemetry")
-def get_device_telemetry(device_id: UUID,current_user=Depends(get_current_user)):
-    conn = get_db_connection()
-    cur = conn.cursor(row_factory=dict_row)
-
-    try:
-        get_device(cur, str(device_id), current_user["id"])
-        telemetry = manager.get_telemetry(str(device_id))
-        if telemetry is None:
-            raise HTTPException(status_code=404,detail="No telemetry available.")
-        return telemetry
-
-    except HTTPException:
-        raise
-
-    except psycopg2.DatabaseError:
+    except psycopg.DatabaseError:
         raise HTTPException(status_code=500,detail="Database error")
 
     finally:
@@ -593,7 +531,7 @@ def get_device_telemetry(device_id: UUID,current_user=Depends(get_current_user))
 
 @app.get("/devices/validate")
 @limiter.limit("20/minute")
-async def validate_device_token(request: Request, authorization: str | None = Header(None)):
+def validate_device_token(request: Request, authorization: str | None = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing device token")
 
@@ -611,4 +549,40 @@ async def validate_device_token(request: Request, authorization: str | None = He
         "device_id": str(device["id"]),
         "hostname": device["hostname"],
     }
-  
+
+@app.get("/devices/{device_id}")
+def get_single_device(device_id: UUID,current_user=Depends(get_current_user)):
+    conn = get_db_connection()
+    cur = conn.cursor(row_factory=dict_row)
+
+    try:
+        device = get_device(cur,device_id,current_user["id"])
+        if device is None:
+            raise HTTPException(404, "Device not found")
+        return device
+
+    except HTTPException:
+        raise
+
+    except psycopg.DatabaseError:
+        raise HTTPException(status_code=500,detail="Database error")
+
+    finally:
+        cur.close()
+        conn.close()
+
+
+
+
+@app.get("/devices/{device_id}/telemetry")
+async def get_device_telemetry(device_id: UUID, current_user=Depends(get_current_user)):
+    def lookup_device():
+        with get_db_connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            return get_device(cur, device_id, current_user["id"])
+
+    if await run_in_threadpool(lookup_device) is None:
+        raise HTTPException(404, "Device not found")
+    telemetry = await manager.get_telemetry(str(device_id))
+    if telemetry is None:
+        raise HTTPException(404, "No telemetry available.")
+    return telemetry

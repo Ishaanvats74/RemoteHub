@@ -1,13 +1,11 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/constants/api_constants.dart';
 import '../../state/devices_state.dart';
-import '../../state/websocket_state.dart';
-import '../../widgets/common/app_button.dart';
 
 class PairingScreen extends ConsumerStatefulWidget {
   const PairingScreen({super.key});
@@ -17,360 +15,213 @@ class PairingScreen extends ConsumerStatefulWidget {
 }
 
 class _PairingScreenState extends ConsumerState<PairingScreen> {
-  String? _code;
-  bool _isLoading = false;
+  final _form = GlobalKey<FormState>();
+  final _code = TextEditingController();
+  final _cancel = CancelToken();
+
+  bool _submitting = false;
+  String? _hostname;
   String? _error;
-  bool _isCopied = false;
+  bool _approved = false;
 
-  Timer? _countdownTimer;
-
-  int _secondsRemaining =
-      ApiConstants.pairingCodeExpireMinutes * 60;
-
-  final int _totalSeconds =
-      ApiConstants.pairingCodeExpireMinutes * 60;
-
-  late final ProviderSubscription _pairingSubscription;
-
-  @override
-  void initState() {
-    super.initState();
-
-    // Listen for the backend notification that a desktop
-    // has successfully paired with this account.
-    _pairingSubscription = ref.listenManual(
-      wsDevicePairedStreamProvider,
-      (previous, next) {
-        next.whenData((message) {
-          if (!mounted) return;
-
-          // Stop the pairing-code countdown.
-          _countdownTimer?.cancel();
-
-          // Show success message.
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '${message.hostname} connected successfully!',
-              ),
-            ),
-          );
-
-          // Give the user a moment to see the message,
-          // then return to the previous screen.
-          Future.delayed(
-            const Duration(milliseconds: 800),
-            () {
-              if (mounted) {
-                Navigator.of(context).pop();
-              }
-            },
-          );
-        });
-      },
-    );
-
-    _fetchPairingCode();
-  }
-
-  @override
-  void dispose() {
-    _countdownTimer?.cancel();
-    _pairingSubscription.close();
-    super.dispose();
-  }
-
-  Future<void> _fetchPairingCode() async {
-    if (!mounted) return;
-
+  Future<void> _submit() async {
+    if (_submitting || !_form.currentState!.validate()) return;
+    final api = ref.read(devicesApiProvider);
     setState(() {
-      _isLoading = true;
+      _submitting = true;
       _error = null;
-      _isCopied = false;
     });
 
     try {
-      final code = await ref
-          .read(devicesNotifierProvider.notifier)
-          .generatePairingCode();
-
+      final request = await api.requestPairing(_code.text, _cancel);
       if (!mounted) return;
+      final id = request['session_id'] as String;
+      final expiresAt = DateTime.parse(request['expires_at'] as String);
+      setState(() => _hostname = request['hostname'] as String);
 
-      setState(() {
-        _code = code;
-        _secondsRemaining = _totalSeconds;
-        _isLoading = false;
-      });
-
-      _startCountdown();
-    } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        _isLoading = false;
-        _error = e.toString();
-      });
+      while (mounted) {
+        if (DateTime.now().isAfter(expiresAt)) {
+          throw const PairingFailure(
+            'This code expired. Get a new one from your laptop.',
+          );
+        }
+        try {
+          final status = await api.getPairingStatus(id, _cancel);
+          if (!mounted) return;
+          switch (status['status']) {
+            case 'denied':
+              throw const PairingFailure(
+                'The request was declined. Get a new code from your laptop.',
+              );
+            case 'approved':
+              if (status['online'] == true) {
+                _finish();
+                return;
+              }
+              if (!_approved) setState(() => _approved = true);
+          }
+        } on DioException catch (error) {
+          if (!mounted || CancelToken.isCancel(error)) return;
+          final code = error.response?.statusCode;
+          if (code != null && code < 500 && code != 429) rethrow;
+        }
+        await Future<void>.delayed(const Duration(seconds: 2));
+      }
+    } on PairingFailure catch (error) {
+      _showError(error.message);
+    } on DioException catch (error) {
+      if (!CancelToken.isCancel(error)) {
+        _showError(api.apiClient.formatDioError(error));
+      }
+    } on FormatException {
+      _showError('The server returned an invalid pairing response.');
+    } on TypeError {
+      _showError('The server returned an invalid pairing response.');
     }
   }
 
-  void _startCountdown() {
-    _countdownTimer?.cancel();
-
-    _countdownTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (timer) {
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
-
-        if (_secondsRemaining <= 1) {
-          timer.cancel();
-
-          setState(() {
-            _secondsRemaining = 0;
-          });
-
-          return;
-        }
-
-        setState(() {
-          _secondsRemaining--;
-        });
-      },
-    );
-  }
-
-  Future<void> _copyCode() async {
-    if (_code == null) return;
-
-    await Clipboard.setData(
-      ClipboardData(text: _code!),
-    );
-
+  void _showError(String message) {
     if (!mounted) return;
-
+    if (_approved) {
+      _finish();
+      return;
+    }
     setState(() {
-      _isCopied = true;
+      _submitting = false;
+      _hostname = null;
+      _error = message;
     });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Pairing code copied'),
-      ),
-    );
-
-    Future.delayed(
-      const Duration(seconds: 2),
-      () {
-        if (mounted) {
-          setState(() {
-            _isCopied = false;
-          });
-        }
-      },
-    );
   }
 
-  String _formatCountdown() {
-    final minutes = _secondsRemaining ~/ 60;
-    final seconds = _secondsRemaining % 60;
+  void _finish() => Navigator.of(context).pop(true);
 
-    return '${minutes.toString().padLeft(2, '0')}:'
-        '${seconds.toString().padLeft(2, '0')}';
-  }
-
-  double _progressValue() {
-    if (_totalSeconds == 0) return 0;
-
-    return _secondsRemaining / _totalSeconds;
+  @override
+  void dispose() {
+    _cancel.cancel();
+    _code.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hostname = _hostname;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Pair Device'),
-      ),
+      appBar: AppBar(title: const Text('Pair a laptop')),
       body: SafeArea(
-        child: Padding(
+        child: ListView(
           padding: const EdgeInsets.all(24),
-          child: _isLoading
-              ? const Center(
-                  child: CircularProgressIndicator(),
-                )
-              : _error != null
-                  ? _buildErrorState()
-                  : _buildPairingContent(theme),
+          children: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: hostname == null
+                        ? Form(
+                            key: _form,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Icon(
+                                  Icons.laptop_mac_outlined,
+                                  size: 36,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'Enter the laptop code',
+                                  style: theme.textTheme.headlineSmall,
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Open RemoteHub on your laptop and enter the six digits it displays.',
+                                ),
+                                const SizedBox(height: 24),
+                                TextFormField(
+                                  controller: _code,
+                                  enabled: !_submitting,
+                                  keyboardType: TextInputType.number,
+                                  textInputAction: TextInputAction.done,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                  ],
+                                  maxLength: 6,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Pairing code',
+                                    hintText: '000000',
+                                    border: OutlineInputBorder(),
+                                    counterText: '',
+                                  ),
+                                  validator: (value) =>
+                                      (value?.length ?? 0) == 6
+                                      ? null
+                                      : 'Enter all six digits.',
+                                  onFieldSubmitted: (_) => _submit(),
+                                ),
+                                if (_error != null) ...[
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    _error!,
+                                    style: TextStyle(
+                                      color: theme.colorScheme.error,
+                                    ),
+                                  ),
+                                ],
+                                const SizedBox(height: 20),
+                                FilledButton(
+                                  onPressed: _submitting ? null : _submit,
+                                  child: Text(
+                                    _submitting
+                                        ? 'Sending request…'
+                                        : 'Request connection',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Center(child: CircularProgressIndicator()),
+                              const SizedBox(height: 24),
+                              Text(
+                                _approved
+                                    ? 'Connecting to your laptop'
+                                    : 'Waiting for approval',
+                                style: theme.textTheme.headlineSmall,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                _approved
+                                    ? '$hostname approved your request. It will appear online when it connects.'
+                                    : 'Select Approve in RemoteHub on $hostname.',
+                              ),
+                              if (_approved) ...[
+                                const SizedBox(height: 16),
+                                TextButton(
+                                  onPressed: _finish,
+                                  child: const Text('Go to devices'),
+                                ),
+                              ],
+                            ],
+                          ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+}
 
-  Widget _buildErrorState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.error_outline,
-            size: 56,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            _error ?? 'Something went wrong',
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 24),
-          AppButton(
-            text: 'Try Again',
-            onPressed: _fetchPairingCode,
-          ),
-        ],
-      ),
-    );
-  }
+class PairingFailure implements Exception {
+  const PairingFailure(this.message);
 
-  Widget _buildPairingContent(ThemeData theme) {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 32),
-
-          const Icon(
-            Icons.devices,
-            size: 72,
-          ),
-
-          const SizedBox(height: 24),
-
-          Text(
-            'Pair Your Device',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-
-          const SizedBox(height: 12),
-
-          Text(
-            'Enter this 6-digit code on the desktop device '
-            'you want to pair with your account.',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium,
-          ),
-
-          const SizedBox(height: 40),
-
-          if (_code != null)
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 28,
-              ),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: theme.dividerColor,
-                ),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    'PAIRING CODE',
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      letterSpacing: 1.5,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-
-                  const SizedBox(height: 16),
-
-                  SelectableText(
-                    _code!,
-                    style: theme.textTheme.displaySmall?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 8,
-                    ),
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  SizedBox(
-                    height: 44,
-                    child: AppButton(
-                      text: _isCopied ? 'Copied' : 'Copy Code',
-                      onPressed: _copyCode,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          const SizedBox(height: 32),
-
-          Text(
-            'Code expires in',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium,
-          ),
-
-          const SizedBox(height: 8),
-
-          Text(
-            _formatCountdown(),
-            textAlign: TextAlign.center,
-            style: theme.textTheme.headlineMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          LinearProgressIndicator(
-            value: _progressValue(),
-          ),
-
-          const SizedBox(height: 40),
-
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              color: theme.colorScheme.surfaceContainerHighest,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.info_outline,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Open RemoteHub on your desktop and enter '
-                    'the code shown above. Once the device pairs, '
-                    'this screen will automatically close.',
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 24),
-
-          TextButton(
-            onPressed: _fetchPairingCode,
-            child: const Text('Generate New Code'),
-          ),
-        ],
-      ),
-    );
-  }
+  final String message;
 }

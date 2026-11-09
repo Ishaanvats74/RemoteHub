@@ -78,7 +78,7 @@ class LineChartWidget extends StatelessWidget {
             sideTitles: SideTitles(
               showTitles: true,
               reservedSize: 20,
-              interval: 15,
+              interval: maxX > 20 ? (maxX / 4).roundToDouble() : 5.0,
               getTitlesWidget: (value, meta) {
                 // Show 60s, 45s, 30s, 15s, 0s
                 final secondsAgo = (maxX - value).toInt();

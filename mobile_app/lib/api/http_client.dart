@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import '../core/constants/api_constants.dart';
 import 'token_storage.dart';
 
@@ -43,7 +42,7 @@ class ApiClient {
 
   void _setupInterceptors() {
     dio.interceptors.add(
-      QueuedInterceptorsWrapper(
+      InterceptorsWrapper(
         onRequest: (options, handler) async {
           // Do not attach token for public auth endpoints
           final isPublicAuth = options.path.contains(ApiConstants.token) ||
@@ -68,19 +67,17 @@ class ApiClient {
           final alreadyRetried = err.requestOptions.extra['retried'] == true;
 
           if (err.response?.statusCode == 401 && !isAuthEndpoint && !alreadyRetried) {
-            try {
-              final newAccessToken = await _performTokenRefresh();
-              if (newAccessToken != null && newAccessToken.isNotEmpty) {
-                // Retry the original request once
-                final options = err.requestOptions;
-                options.extra['retried'] = true;
-                options.headers['Authorization'] = 'Bearer $newAccessToken';
-
+            final newAccessToken = await _performTokenRefresh();
+            if (newAccessToken != null && newAccessToken.isNotEmpty) {
+              final options = err.requestOptions;
+              options.extra['retried'] = true;
+              options.headers['Authorization'] = 'Bearer $newAccessToken';
+              try {
                 final response = await dio.fetch(options);
                 return handler.resolve(response);
+              } on DioException catch (retryError) {
+                return handler.reject(retryError);
               }
-            } catch (refreshErr) {
-              debugPrint('Token refresh failed: $refreshErr');
             }
 
             // Refresh failed or returned null: user session expired

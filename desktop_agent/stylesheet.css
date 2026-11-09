@@ -54,3 +54,22 @@ QPushButton#disconnect {
 QPushButton#disconnect:hover {
   background: #b91c1c;
 }
+
+QLabel#pairingCode {
+  background: #eaf2ff;
+  border-radius: 12px;
+  color: #143b80;
+  font-size: 36px;
+  font-weight: bold;
+  padding: 12px;
+}
+
+QPushButton#secondary {
+  background: #e5e7eb;
+  color: #24292f;
+}
+
+QPushButton:disabled {
+  background: #d1d5db;
+  color: #4b5563;
+}

@@ -1,38 +1,29 @@
-import requests
-import platform
 import asyncio
+import os
+import platform
 import socket
 
-async def validate_token(device_token: str):
+import requests
+
+SERVER_URL = os.getenv("REMOTEHUB_SERVER_URL", "http://127.0.0.1:8000").rstrip("/")
+
+
+async def pairing_request(method, path, *, secret=None, payload=None):
     response = await asyncio.to_thread(
-        requests.get,
-        "http://127.0.0.1:8000/devices/validate",
-        headers={"Authorization": f"Bearer {device_token}"},
-        timeout=10,
+        requests.request,
+        method,
+        f"{SERVER_URL}/pairing{path}",
+        headers={"Authorization": f"Bearer {secret}"} if secret else {},
+        json=payload,
+        timeout=8,
     )
-    return response
+    response.raise_for_status()
+    return response.json()
 
 
-async def pairing(code):
-    os_name = platform.system()
-    platform_info = platform.platform()
-    hostname = socket.gethostname()
-
-    data = {
-        "code": code,
-        "hostname": hostname,
-        "os": os_name,
-        "platform": platform_info,
-    }
-
-    response = await asyncio.to_thread(
-        requests.post,
-        "http://127.0.0.1:8000/devices/pair",
-        json=data,
-        timeout=10,
-    )
-
-
-
-    return response
-  
+async def create_session():
+    return await pairing_request("POST", "/sessions", payload={
+        "hostname": socket.gethostname(),
+        "os": platform.system(),
+        "platform": platform.platform(),
+    })

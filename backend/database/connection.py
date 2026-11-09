@@ -1,19 +1,13 @@
-# import psycopg2
-# from .config import config
-import psycopg
 import os
+
+import psycopg
 from dotenv import load_dotenv
+
 load_dotenv()
 
-# def get_db_connection():
-#     params = config()
-#     conn = psycopg2.connect(**params)
-#     conn.autocommit = True
-#     return conn
-
-conn_string = os.getenv("DATABASE_URL")
 
 def get_db_connection():
-    conn = psycopg.connect(conn_string)
-    conn.autocommit = True
-    return conn
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise psycopg.OperationalError("DATABASE_URL is not configured")
+    return psycopg.connect(database_url, autocommit=True, connect_timeout=10)

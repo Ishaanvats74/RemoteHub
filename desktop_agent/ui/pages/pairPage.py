@@ -1,92 +1,57 @@
-from PySide6.QtWidgets import (
-    QWidget,
-    QLabel,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLineEdit,
-    QPushButton,
-    QMessageBox,
-)
-from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 
 class PairPage(QWidget):
-    # Emitted when the user enters a valid pairing code
-    pair_requested = Signal(str)
+    generate_requested = Signal()
+    decision_requested = Signal(bool)
 
     def __init__(self):
         super().__init__()
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(14)
+        layout.setSpacing(12)
 
-        title = QLabel("RemoteHub Agent")
+        title = QLabel("Pair this laptop")
         title.setObjectName("title")
         title.setAlignment(Qt.AlignCenter)
 
-        subtitle = QLabel("Pair your computer")
-        subtitle.setObjectName("subtitle")
+        self.code = QLabel()
+        self.code.setObjectName("pairingCode")
+        self.code.setAlignment(Qt.AlignCenter)
+        self.code.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Pairing Code"))
+        self.message = QLabel()
+        self.message.setTextFormat(Qt.PlainText)
+        self.message.setWordWrap(True)
+        self.message.setAlignment(Qt.AlignCenter)
 
-        self.code_input = QLineEdit()
-        self.code_input.setPlaceholderText("Enter 6-digit code")
-        self.code_input.setMaxLength(6)
-        self.code_input.setValidator(QIntValidator(0, 999999, self))
-        self.code_input.returnPressed.connect(self.on_connect_clicked)
+        self.approve = QPushButton("Approve")
+        self.approve.clicked.connect(lambda: self.decision_requested.emit(True))
+        self.decline = QPushButton("Decline")
+        self.decline.setObjectName("secondary")
+        self.decline.clicked.connect(lambda: self.decision_requested.emit(False))
+        self.generate = QPushButton("Generate new code")
+        self.generate.clicked.connect(self.generate_requested.emit)
 
-        row.addWidget(self.code_input)
-
-        self.connect_btn = QPushButton("Connect")
-        self.connect_btn.clicked.connect(self.on_connect_clicked)
-
+        actions = QHBoxLayout()
+        actions.addWidget(self.decline)
+        actions.addWidget(self.approve)
         layout.addWidget(title)
-        layout.addWidget(subtitle)
-        layout.addLayout(row)
-        layout.addWidget(self.connect_btn)
-        layout.addStretch()
+        layout.addWidget(self.code)
+        layout.addWidget(self.message)
+        layout.addLayout(actions)
+        layout.addWidget(self.generate)
+        self.show_state("Preparing pairing...")
 
-    def on_connect_clicked(self):
-        code = self.code_input.text().strip()
+    def show_state(self, message, *, code=None, approval=False, retry=False):
+        self.message.setText(message)
+        self.code.setText(code or "")
+        self.code.setVisible(code is not None)
+        self.approve.setVisible(approval)
+        self.decline.setVisible(approval)
+        self.generate.setVisible(retry)
 
-        if not code:
-            QMessageBox.warning(
-                self,
-                "Validation Error",
-                "Please enter the pairing code.",
-            )
-            return
-
-        if len(code) != 6:
-            QMessageBox.warning(
-                self,
-                "Validation Error",
-                "Pairing code must contain exactly 6 digits.",
-            )
-            return
-
-        # Disable UI while controller processes pairing
-        self.set_loading(True)
-
-        # Notify the controller
-        self.pair_requested.emit(code)
-
-    def set_loading(self, loading: bool):
-        """Enable/Disable the page while pairing."""
-
-        self.connect_btn.setEnabled(not loading)
-        self.code_input.setEnabled(not loading)
-
-        if loading:
-            self.connect_btn.setText("Connecting...")
-        else:
-            self.connect_btn.setText("Connect")
-
-    def clear_code(self):
-        self.code_input.clear()
-
-    def focus_input(self):
-        self.code_input.setFocus()
+    def set_decision_enabled(self, enabled):
+        self.approve.setEnabled(enabled)
+        self.decline.setEnabled(enabled)

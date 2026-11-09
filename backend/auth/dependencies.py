@@ -1,5 +1,5 @@
 from fastapi.security import OAuth2PasswordBearer
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from jwt.exceptions import InvalidTokenError
 from psycopg.rows import dict_row
 from pydantic import BaseModel
@@ -7,11 +7,9 @@ from typing import Annotated
 import jwt
 import os
 from dotenv import load_dotenv
-from database.devices import get_device_by_id
 from database.connection import get_db_connection
 from database.users import get_user_by_id
-from database.utils import hash_token
-from psycopg2 import DatabaseError
+from psycopg import DatabaseError
 
 load_dotenv()
 
@@ -24,7 +22,7 @@ class User(BaseModel):
     email: str
     username:str
     
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
+def get_current_user(request: Request, token: Annotated[str, Depends(oauth2_scheme)]):
     payload = decode_token(token, "access")
     user_id = payload.get("sub")
     if user_id is None:
@@ -45,6 +43,7 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
 
     if user is None:
         raise credentials_exception
+    request.state.user = user
     return user
 
 
@@ -52,31 +51,12 @@ async def get_current_active_user(current_user: Annotated[dict, Depends(get_curr
     return current_user
 
 
-async def get_current_device(token: Annotated[str, Depends(oauth2_scheme)]):
-    payload = decode_token(token, "device")
+def get_current_device(token: Annotated[str, Depends(oauth2_scheme)]):
+    from auth.security import authenticate_device
 
-    device_id = payload.get("sub")
-    if device_id is None:
-        raise credentials_exception
-
-    conn = get_db_connection()
-    cur = conn.cursor(row_factory=dict_row)
-
-    try:
-        device = get_device_by_id(cur, device_id)
-    except DatabaseError:
-        raise HTTPException(status_code=500,detail="Database error")
-    
-    finally:
-        cur.close()
-        conn.close()
-
+    device = authenticate_device(token)
     if device is None:
         raise credentials_exception
-
-    if device["token_hash"] != hash_token(token):
-        raise credentials_exception
-
     return device
 
 

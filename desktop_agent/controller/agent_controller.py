@@ -1,12 +1,15 @@
-from services.websocket import ws_client
-from qasync import asyncSlot
-from services.pairing import pairing, validate_token
-from storage.token import save_token, load_token, delete_token
-import requests
 import asyncio
-import json
 import logging
+import socket
+from datetime import datetime, timezone
+
+import requests
 from PySide6.QtCore import QObject, Signal
+from qasync import asyncSlot
+
+from services.pairing import create_session, pairing_request
+from services.websocket import ws_client
+from storage.token import delete_token, load_token, save_token
 
 logger = logging.getLogger(__name__)
 
@@ -14,122 +17,117 @@ logger = logging.getLogger(__name__)
 class AgentController(QObject):
     show_pair = Signal()
     show_connected = Signal()
-    show_error = Signal(str)
 
     def __init__(self, window):
         super().__init__()
         self.window = window
         self.ws_task = None
+        self.poll_task = None
+        self.session = None
 
     async def startup(self):
-        try:
-            token = load_token()
-        except (FileNotFoundError, json.JSONDecodeError):
-            token = None
-
-        if token and "device_token" in token:
-            try:
-                response = await validate_token(token["device_token"])
-
-                if response.status_code == 200:
-                    self._start_ws(token["device_token"])
-                    self.show_connected.emit()
-                    return
-                else:
-                    logger.warning("Stored device token is invalid or revoked.")
-                    delete_token()
-
-            except requests.exceptions.RequestException as e:
-                # Server unreachable right now — don't nuke the token over a
-                # transient network issue. Let the websocket's own reconnect
-                # loop handle it; if the server rejects the token once it's
-                # back up, _on_invalid_token will clean up then.
-                logger.warning("Could not reach server to validate token: %s", e)
-                self._start_ws(token["device_token"])
-                self.show_connected.emit()
-                return
-
-        delete_token()
-        self.show_pair.emit()
+        token = load_token()
+        if token and token.get("device_token"):
+            self._start_ws(token["device_token"])
+        else:
+            await self._generate_code()
 
     def _start_ws(self, device_token):
         if self.ws_task is None:
+            page = self.window.connected_page
+            page.set_device(socket.gethostname())
+            page.set_status("Connecting...")
+            self.show_connected.emit()
             self.ws_task = asyncio.create_task(
-                ws_client(device_token, self._on_invalid_token, self._on_ws_error)
+                ws_client(device_token, self._on_invalid_token, self._on_ws_error, self._on_connected)
             )
 
+    async def _on_connected(self):
+        self.window.connected_page.set_status("Online")
+
     async def _on_invalid_token(self):
-        """Called when the server rejects our device token (revoked/invalid)."""
-        logger.info("Device token rejected by server. Clearing local token.")
         delete_token()
         self.ws_task = None
-        self.show_error.emit("This device's connection was revoked. Please pair again.")
-        self.show_pair.emit()
+        await self._generate_code()
 
-    async def _on_ws_error(self, message: str):
-        """Called on recoverable websocket errors (network blips, unexpected exceptions)."""
+    async def _on_ws_error(self, message):
         logger.warning("WebSocket error: %s", message)
-        self.show_error.emit(message)
+        self.window.connected_page.set_status("Reconnecting...")
 
-    @asyncSlot(str)
-    async def pair_device(self, code):
+    @asyncSlot()
+    async def generate_code(self):
+        await self._generate_code()
+
+    async def _generate_code(self):
+        page = self.window.pair_page
+        if self.poll_task:
+            self.poll_task.cancel()
+        self.session = None
+        self.show_pair.emit()
+        page.set_decision_enabled(True)
+        page.show_state("Generating code...")
         try:
-            response = await pairing(code)
-            response.raise_for_status()
-            data = response.json()
-            if "device_token" not in data:
-                self.error("Server returned an invalid response.")
-                self.window.pair_page.set_loading(False)
-                return
+            session = await create_session()
+            self.session = session
+            page.show_state("Enter this code in the RemoteHub phone app.", code=session["code"])
+            self.poll_task = asyncio.create_task(self._poll_session(session))
+        except (requests.RequestException, ValueError):
+            page.show_state("Could not generate a code. Check the server connection.", retry=True)
 
-            save_token(data)
-            self._start_ws(data["device_token"])
-
-            self.window.pair_page.set_loading(False)
-            self.window.pair_page.clear_code()
-            self.show_connected.emit()
-
-        except requests.exceptions.Timeout:
-            self.window.pair_page.set_loading(False)
-            self.error("Connection timed out.")
-
-        except requests.exceptions.ConnectionError:
-            self.window.pair_page.set_loading(False)
-            self.error("Unable to connect to the server.")
-
-        except requests.exceptions.HTTPError:
-            self.window.pair_page.set_loading(False)
+    async def _poll_session(self, session):
+        page = self.window.pair_page
+        path = f"/sessions/{session['session_id']}"
+        expires_at = datetime.fromisoformat(session["expires_at"])
+        while datetime.now(timezone.utc) < expires_at:
             try:
-                error = response.json().get("detail", response.text)
-            except Exception:
-                error = response.text
-            self.error(error)
+                result = await pairing_request("GET", path, secret=session["secret"])
+                match result["status"]:
+                    case "pending":
+                        page.show_state(f"Pairing requested by {result['requester']}.",
+                                        code=session["code"], approval=True)
+                    case "approved":
+                        save_token({"device_token": result["device_token"], "device_id": result["device_id"]})
+                        self.session = None
+                        self._start_ws(result["device_token"])
+                        return
+                    case "denied":
+                        page.show_state("Pairing declined.", retry=True)
+                        return
+                    case "open":
+                        page.show_state("Enter this code in the RemoteHub phone app.", code=session["code"])
+            except requests.HTTPError as exc:
+                if exc.response.status_code in (401, 404, 410):
+                    break
+                page.show_state("Waiting for the server...", code=session["code"])
+            except (requests.RequestException, ValueError):
+                page.show_state("Waiting for the server...", code=session["code"])
+            except OSError:
+                page.show_state("Could not save the device credential. Retrying...", code=session["code"])
+            await asyncio.sleep(2)
+        page.show_state("This code expired. Generate a new one to pair.", retry=True)
 
-        except requests.exceptions.RequestException as e:
-            self.window.pair_page.set_loading(False)
-            self.error(str(e))
-
-        except json.JSONDecodeError:
-            self.window.pair_page.set_loading(False)
-            self.error("Server returned an invalid response.")
-
-        except Exception as e:
-            logger.exception("Unexpected error during pairing")
-            self.window.pair_page.set_loading(False)
-            self.error(f"Unexpected error:\n{e}")
+    @asyncSlot(bool)
+    async def decide(self, approve):
+        session = self.session
+        if not session:
+            return
+        page = self.window.pair_page
+        page.set_decision_enabled(False)
+        try:
+            await pairing_request(
+                "POST", f"/sessions/{session['session_id']}/decision",
+                secret=session["secret"], payload={"approve": approve},
+            )
+        except (requests.RequestException, ValueError):
+            # A lost response may still have committed the decision. Polling reconciles it.
+            if self.session is session:
+                page.set_decision_enabled(True)
 
     @asyncSlot()
     async def disconnect(self):
         if self.ws_task:
             self.ws_task.cancel()
-            try:
-                await self.ws_task
-            except asyncio.CancelledError:
-                pass
+            await asyncio.gather(self.ws_task, return_exceptions=True)
             self.ws_task = None
-
         delete_token()
-        self.show_pair.emit()
-
-    def error(self, message):
-        self.show_error.emit(message)
+        await self._generate_code()

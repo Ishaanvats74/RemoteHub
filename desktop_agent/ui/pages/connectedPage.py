@@ -16,7 +16,7 @@ class ConnectedPage(QWidget):
         title.setObjectName("title")
         title.setAlignment(Qt.AlignCenter)
 
-        self.status = QLabel("● Connected")
+        self.status = QLabel("Device link")
         self.status.setObjectName("status")
 
         self.device_label = QLabel("Device: -")

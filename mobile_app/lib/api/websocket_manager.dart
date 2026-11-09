@@ -34,6 +34,8 @@ class WebSocketManager {
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
   Timer? _reconnectTimer;
+  Timer? _authTimer;
+  int _connectionGeneration = 0;
 
   WsConnectionStatus _status = WsConnectionStatus.disconnected;
   int _reconnectAttempts = 0;
@@ -125,7 +127,9 @@ class WebSocketManager {
     _intentionalDisconnect = false;
     _reconnectTimer?.cancel();
 
+    final generation = _connectionGeneration;
     final token = await tokenStorage.getAccessToken();
+    if (generation != _connectionGeneration || _channel != null) return;
 
     if (token == null || token.isEmpty) {
       debugPrint(
@@ -157,44 +161,21 @@ class WebSocketManager {
     );
 
     try {
-      _channel = WebSocketChannel.connect(wsUri);
+      final channel = WebSocketChannel.connect(wsUri);
+      _channel = channel;
+      await channel.ready.timeout(const Duration(seconds: 10));
+      if (!identical(_channel, channel)) return;
 
-      await _channel!.ready;
-
-      // -------------------------------------------------
-      // Authenticate as first WebSocket message
-      // -------------------------------------------------
-
-      final authPayload = jsonEncode({
-        'token': token,
-      });
-
-      _channel!.sink.add(authPayload);
-
-      debugPrint(
-        '[WebSocket] Auth token handshake sent',
-      );
-
-      _reconnectAttempts = 0;
-
-      _updateStatus(
-        WsConnectionStatus.connected,
-      );
-
-      // -------------------------------------------------
-      // Listen for incoming messages
-      // -------------------------------------------------
-
-      _subscription = _channel!.stream.listen(
+      _subscription = channel.stream.listen(
         _handleIncomingData,
         onError: _handleError,
         onDone: _handleDone,
         cancelOnError: false,
       );
-
-      // Send commands that were queued while disconnected.
-      _flushPendingCommands();
+      _authTimer = Timer(const Duration(seconds: 10), _scheduleReconnect);
+      channel.sink.add(jsonEncode({'token': token}));
     } catch (e) {
+      if (generation != _connectionGeneration) return;
       debugPrint(
         '[WebSocket] Connection failed: $e',
       );
@@ -216,12 +197,18 @@ class WebSocketManager {
         '[WebSocket] Received: $stringData',
       );
 
-      final decoded =
-          jsonDecode(stringData);
+      final decoded = jsonDecode(stringData);
 
-      if (decoded is Map<String, dynamic>) {
-        final message =
-            WsIncomingMessage.fromJson(decoded);
+      if (decoded is Map) {
+        final Map<String, dynamic> map = Map<String, dynamic>.from(decoded);
+        if (map['type'] == 'authenticated') {
+          _authTimer?.cancel();
+          _reconnectAttempts = 0;
+          _updateStatus(WsConnectionStatus.connected);
+          _flushPendingCommands();
+          return;
+        }
+        final message = WsIncomingMessage.fromJson(map);
 
         // Everything goes through the central
         // broadcast stream.
@@ -236,10 +223,10 @@ class WebSocketManager {
           );
         }
       }
-    } catch (e) {
+    } catch (e, stack) {
       debugPrint(
         '[WebSocket] Error parsing message: '
-        '$e (Raw: $rawData)',
+        '$e (Raw: $rawData)\n$stack',
       );
     }
   }
@@ -272,6 +259,7 @@ class WebSocketManager {
     final code =
         _channel?.closeCode;
 
+    _authTimer?.cancel();
     _subscription?.cancel();
     _channel = null;
 
@@ -306,8 +294,12 @@ class WebSocketManager {
   // -------------------------------------------------
 
   void _scheduleReconnect() {
+    _connectionGeneration++;
+    _authTimer?.cancel();
     _subscription?.cancel();
+    final channel = _channel;
     _channel = null;
+    channel?.sink.close();
 
     if (_intentionalDisconnect) {
       _updateStatus(
@@ -481,7 +473,8 @@ class WebSocketManager {
 
   void disconnect() {
     _intentionalDisconnect = true;
-
+    _connectionGeneration++;
+    _authTimer?.cancel();
     _reconnectTimer?.cancel();
     _subscription?.cancel();
 

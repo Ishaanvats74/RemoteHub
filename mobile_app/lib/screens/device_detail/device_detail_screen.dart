@@ -312,7 +312,10 @@ class DeviceDetailScreen extends ConsumerWidget {
                 const SizedBox(height: 12),
 
                 if (detailState.telemetry != null)
-                  TelemetryGrid(telemetry: detailState.telemetry!)
+                  TelemetryGrid(
+                    telemetry: detailState.telemetry!,
+                    buffer: detailState.buffer,
+                  )
                 else
                   Container(
                     width: double.infinity,

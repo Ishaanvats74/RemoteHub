@@ -2,6 +2,7 @@ from collections import defaultdict
 from fastapi import WebSocket
 from datetime import datetime, UTC
 import logging
+from cache.redis_client import redis_cache
 
 logger = logging.getLogger(__name__)
 
@@ -19,17 +20,19 @@ class ConnectionManager:
 
     async def connect_desktop(self, user_id: str, device_id: str, websocket: WebSocket) -> None:
         old = self.desktop_connections.get(device_id)
+        self.desktop_connections[device_id] = websocket
         if old:
             try:
                 await old.close()
             except Exception:
                 logger.debug("Failed to close stale desktop connection for device %s", device_id)
 
-        self.desktop_connections[device_id] = websocket
         self.user_devices[user_id].add(device_id)
         logger.info("Desktop connected: user=%s device=%s", user_id, device_id)
 
-    def disconnect_desktop(self, user_id: str, device_id: str) -> None:
+    def disconnect_desktop(self, user_id: str, device_id: str, websocket: WebSocket) -> bool:
+        if self.desktop_connections.get(device_id) is not websocket:
+            return False
         self.desktop_connections.pop(device_id, None)
         self.telemetry.pop(device_id, None)
 
@@ -40,6 +43,7 @@ class ConnectionManager:
                 del self.user_devices[user_id]
 
         logger.info("Desktop disconnected: user=%s device=%s", user_id, device_id)
+        return True
 
     # -------------------------------------------------
     # Mobile
@@ -67,11 +71,13 @@ class ConnectionManager:
     # Telemetry
     # -------------------------------------------------
 
-    def update_telemetry(self, device_id: str, data: dict) -> None:
-        self.telemetry[device_id] = {"timestamp": datetime.now(UTC).isoformat(), "data": data}
+    async def update_telemetry(self, device_id: str, data: dict) -> None:
+        payload = {"timestamp": datetime.now(UTC).isoformat(), "data": data}
+        self.telemetry[device_id] = payload
+        await redis_cache.set_telemetry(device_id, payload)
 
-    def get_telemetry(self, device_id: str) -> dict | None:
-        return self.telemetry.get(device_id)
+    async def get_telemetry(self, device_id: str) -> dict | None:
+        return self.telemetry.get(device_id) or await redis_cache.get_telemetry(device_id)
 
     # -------------------------------------------------
     # Send Data
@@ -89,8 +95,6 @@ class ConnectionManager:
 
         except Exception:
             logger.warning("send_to_device: failed to send to device %s, dropping connection", device_id)
-            self.desktop_connections.pop(device_id, None)
-            self.telemetry.pop(device_id, None)
             return False
 
     async def send_to_user(self, user_id: str, payload: dict) -> None:
@@ -100,23 +104,14 @@ class ConnectionManager:
 
         dead_connections = []
 
-        for websocket in self.mobile_connections[user_id]:
+        for websocket in tuple(self.mobile_connections[user_id]):
             try:
                 await websocket.send_json(payload)
             except Exception:
                 dead_connections.append(websocket)
 
         for websocket in dead_connections:
-            self.mobile_connections[user_id].discard(websocket)
-
-        if dead_connections:
-            logger.debug(
-                "send_to_user: dropped %d dead connection(s) for user %s",
-                len(dead_connections), user_id,
-            )
-
-        if not self.mobile_connections[user_id]:
-            del self.mobile_connections[user_id]
+            self.disconnect_mobile(user_id, websocket)
 
     # -------------------------------------------------
     # Helpers

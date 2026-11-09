@@ -11,6 +11,20 @@ class DevicesApi {
 
   Dio get _dio => apiClient.dio;
 
+  Future<Map<String, dynamic>> requestPairing(String code, CancelToken cancel) async {
+    final response = await _dio.post(
+      '/pairing/requests',
+      data: {'code': code},
+      cancelToken: cancel,
+    );
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
+  Future<Map<String, dynamic>> getPairingStatus(String sessionId, CancelToken cancel) async {
+    final response = await _dio.get('/pairing/requests/$sessionId', cancelToken: cancel);
+    return Map<String, dynamic>.from(response.data as Map);
+  }
+
   /// Generate a 6-digit pairing code for desktop pairing
   /// POST /devices/pairing_code -> { code: "123456" }
   Future<String> getPairingCode() async {

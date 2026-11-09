@@ -1,4 +1,3 @@
-from pathlib import Path
 import json
 
 from .paths import get_app_data_dir
@@ -15,8 +14,9 @@ def load_token():
 
 
 def save_token(data):
-    with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
+    temporary = TOKEN_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(data), encoding="utf-8")
+    temporary.replace(TOKEN_FILE)
 
 def delete_token():
     if TOKEN_FILE.exists():

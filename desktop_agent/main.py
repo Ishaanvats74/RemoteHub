@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QApplication,QMenu,QStyle,QSystemTrayIcon,QMessageBox
+from PySide6.QtWidgets import QApplication,QMenu,QStyle,QSystemTrayIcon
 from controller.agent_controller import AgentController
 from PySide6.QtGui import QIcon, QAction
 from ui.main_window import MainWindow
@@ -17,14 +17,14 @@ window = MainWindow()
 controller = AgentController(window)
 
 # UI -> Controller
-window.pair_page.pair_requested.connect(controller.pair_device)
+window.pair_page.generate_requested.connect(controller.generate_code)
+window.pair_page.decision_requested.connect(controller.decide)
 window.connected_page.disconnect_requested.connect(controller.disconnect)
 
 # Controller -> UI
 controller.show_pair.connect(window.show_pair_page)
 controller.show_connected.connect(window.show_connected_page)
 
-controller.show_error.connect(lambda message: QMessageBox.warning(window,"RemoteHub",message))
 
 window.show()
 

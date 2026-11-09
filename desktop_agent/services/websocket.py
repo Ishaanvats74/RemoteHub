@@ -1,5 +1,6 @@
 from .telemetry import get_hardware_specs, get_live_stats
 from .heartbeat import heartbeat
+from .pairing import SERVER_URL
 import websockets
 import asyncio
 import json
@@ -8,7 +9,7 @@ from commands.executor import cmd_execute
 
 logger = logging.getLogger(__name__)
 
-URL = "ws://127.0.0.1:8000/ws/desktop"
+URL = f"ws{SERVER_URL[4:]}/ws/desktop"
 MAX_DELAY = 30
 
 
@@ -57,73 +58,39 @@ async def receive_commands(ws):
         raise
 
 
-async def ws_client(token, on_invalid_token=None, on_error=None):
-    """
-    Connects to the desktop websocket and keeps it alive with reconnect/backoff.
-
-    on_invalid_token: called (awaited) when the server rejects the token
-                       (close code 1008). Reconnect loop stops after this.
-    on_error:         called (awaited) with a human-readable message on
-                       recoverable errors (network issues, unexpected
-                       exceptions), so the UI can surface it if it wants to.
-                       The loop keeps retrying after this.
-    """
+async def ws_client(token, on_invalid_token, on_error, on_connected):
     delay = 1
-
     while True:
         try:
-            logger.info("Connecting to server...")
-
             async with websockets.connect(URL) as ws:
-                logger.info("Connected")
-                delay = 1
-
                 await ws.send(json.dumps({"token": token}))
+                auth = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+                if auth.get("type") != "authenticated":
+                    raise ValueError("Missing server authentication acknowledgement")
+                await on_connected()
+                delay = 1
 
                 tasks = [
                     asyncio.create_task(send_telemetry(ws)),
                     asyncio.create_task(receive_commands(ws)),
                     asyncio.create_task(heartbeat(ws)),
                 ]
+                try:
+                    done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        task.result()
+                finally:
+                    for task in tasks:
+                        task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
 
-                done, pending = await asyncio.wait(
-                    tasks,
-                    return_when=asyncio.FIRST_EXCEPTION,
-                )
+        except websockets.ConnectionClosed as exc:
+            if exc.rcvd and exc.rcvd.code == 1008:
+                await on_invalid_token()
+                return
+            await on_error("Connection closed")
+        except Exception as exc:
+            await on_error(str(exc))
 
-                for task in done:
-                    exception = task.exception()
-                    if exception:
-                        logger.error(
-                            "WebSocket task failed: %s: %s",
-                            type(exception).__name__,
-                            exception,
-                        )
-
-                for task in pending:
-                    task.cancel()
-
-                await asyncio.gather(*pending, return_exceptions=True)
-
-        except websockets.ConnectionClosed as e:
-            logger.warning("Connection closed: code=%s, reason=%s", e.code, e.reason)
-
-            if e.code == 1008:
-                logger.warning("Device token rejected by server (invalid/revoked).")
-                if on_invalid_token:
-                    await on_invalid_token()
-                return  # stop retrying — this token is dead
-
-        except (OSError, asyncio.TimeoutError) as e:
-            logger.warning("Connection error: %s", e)
-            if on_error:
-                await on_error(f"Connection error: {e}")
-
-        except Exception as e:
-            logger.exception("Unexpected error in ws_client")
-            if on_error:
-                await on_error(f"Unexpected error: {e}")
-
-        logger.info("Reconnecting in %s second(s)...", delay)
         await asyncio.sleep(delay)
         delay = min(delay * 2, MAX_DELAY)
